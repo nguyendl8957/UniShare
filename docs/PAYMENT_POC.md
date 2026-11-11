@@ -1,0 +1,19 @@
+## Ma trận Đánh giá Nhà cung cấp Thanh toán (Payment Providers)
+
+Dựa trên yêu cầu của giảng viên (Có thể tích hợp tạo VietQR tĩnh/ động, yêu cầu giao dịch thật) và điều kiện của nhóm sinh viên (không có pháp nhân doanh nghiệp), dưới đây là kết quả khảo sát các nhà cung cấp:
+
+| Nhà cung cấp | Điều kiện tài khoản & Chi phí                                                                                                                                                             | Hỗ trợ Chuyển khoản nhập tay & VietQR                                                                  | Cơ chế Webhook & Đối soát                                                 | Đánh giá & Quyết định                                                                                                           |
+| :--- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------|
+| **SePay** | Hỗ trợ nhiều tài khoản ngân hàng cá nhân (MBBank, Vietcombank, BIDV, VietinBank, ACB, VPBank, TPBank...). Gói Free: 0đ/tháng, giới hạn 50 giao dịch/tháng. https://sepay.vn/bang-gia.html | **Tốt.** Hiển thị thông tin dạng văn bản để người mua tự copy mã đơn và số tiền dán vào app ngân hàng. | Webhook HTTPS chuẩn, chữ ký HMAC-SHA256, có cơ chế retry và API đối soát. | **GO (Lựa chọn ưu tiên).** Đáp ứng hoàn toàn việc lách VietQR và dùng tài khoản cá nhân. Cần theo dõi sát giới hạn 50 GD/tháng. |
+| **Casso** | Có gói miễn phí (SPONSOR OCB),hỗ trợ tài khoản ngân hàng/ảo cho cá nhân còn hạn chế chỉ 2 (OCB, KienlongBank) https://casso.vn/flow/bang-gia/                                             | **Tốt.** Hỗ trợ trải nghiệm chuyển khoản nhập tay tương tự SePay.                                      | Webhook V2 xác thực nguồn và tính toàn vẹn, có API kiểm tra giao dịch.    | **Dự phòng.** Sẽ sử dụng nếu SePay gặp sự cố kết nối hoặc giới hạn gói.                                                         |
+| **payOS** | Yêu cầu tài khoản cá nhân/doanh nghiệp đã xác thực KYC.                                                                                                                                   | **Kém.** Luồng chuẩn được tài liệu hóa chủ yếu dùng mã VietQR.                                         | Có webhook với chữ ký (signature).                                        | **Dự phòng.** Bị loại trừ do vi phạm quy định cấm dùng VietQR của giảng viên tại thời điểm demo.                                |
+| **MoMo** | Yêu cầu quyền Production, hồ sơ Merchant (KYC doanh nghiệp) đối với các luồng API.                                                                                                        | **Kém.** Luồng Quick Pay là luồng POS quét mã của khách.                                               | Có IPN và chữ ký HMAC cho luồng Collection Link.                          | **NO-GO.** Nhóm sinh viên không đủ điều kiện pháp lý để đăng ký Merchant thật.                                                  |
+
+**Kết luận G1:** Tiến hành tích hợp POC nghiệm thu với **SePay** thông qua tài khoản cá nhân MB Bank/VietcomBank.
+
+## Decision log (Ghi chú quan trọng)
+- **Tài khoản hợp lệ**: Admin quyết định
+- **Ngân hàng**: MB bank/VietcomBank/Tuỳ chỉnh
+- **Chi phí/Quota**: SePay gói Free, 50 giao dịch/tháng
+- **Số tiền thử tối thiểu**: 10.000đ - 20.000đ
+- **Kết luận phương án**: Thực hiện trước tiên với SePay, phương án dự phòng với Casso, PayOS.
