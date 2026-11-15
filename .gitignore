@@ -30,3 +30,13 @@ local.properties
 # OS
 .DS_Store
 Thumbs.db
+
+# Node.js dependencies
+**/node_modules/
+**/npm-debug.log*
+
+# Firebase Emulator generated files
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+**/*-debug.log

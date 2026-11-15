@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "553052880194",
+    "project_id": "unishare-db44a",
+    "storage_bucket": "unishare-db44a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:553052880194:android:89a27d5412ff4113dedcdb",
+        "android_client_info": {
+          "package_name": "vn.unishare"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "553052880194-e0lve6dgjnbm6va98h298ndgo8qle52e.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "vn.unishare",
+            "certificate_hash": "b58f766079f90d6b41b2e3c3bc841b8b61d0bbaf"
+          }
+        },
+        {
+          "client_id": "553052880194-pe005schh3ctvskqtljiv3muksrkql2p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCUTQyXPp2nyulHApQEcjjhZ2U9PZHCOb8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "553052880194-pe005schh3ctvskqtljiv3muksrkql2p.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
