@@ -1,0 +1,32 @@
+# IDE
+.idea/
+*.iml
+
+# Gradle and Android generated files
+.gradle/
+**/.gradle/
+.kotlin/
+**/.kotlin/
+**/build/
+**/.cxx/
+
+# Local configuration
+local.properties
+**/local.properties
+
+# Secrets and signing
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+**/serviceAccountKey.json
+
+# Firebase emulator cache
+.firebase/
+
+# OS
+.DS_Store
+Thumbs.db
