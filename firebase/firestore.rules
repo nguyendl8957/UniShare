@@ -1,0 +1,55 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null
+        && request.auth.uid == uid;
+    }
+
+    function validProfile() {
+      let data = request.resource.data;
+
+      return data.keys().hasAll([
+          'displayName', 'school', 'faculty'
+        ])
+        && data.displayName is string
+        && data.school is string
+        && data.faculty is string
+        && data.displayName.size() <= 100
+        && data.school.size() <= 150
+        && data.faculty.size() <= 150
+        && (
+          !('avatarUrl' in data)
+          || data.avatarUrl == null
+          || data.avatarUrl is string
+        );
+    }
+
+    match /users/{uid} {
+      allow get: if isOwner(uid);
+      allow list: if false;
+
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly([
+          'displayName', 'school', 'faculty', 'avatarUrl'
+        ])
+        && validProfile();
+
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly([
+            'displayName', 'school', 'faculty', 'avatarUrl'
+          ])
+        && validProfile();
+
+      allow delete: if false;
+    }
+
+    // Các collection khác vẫn bị chặn mặc định.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
