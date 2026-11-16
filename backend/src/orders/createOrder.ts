@@ -1,3 +1,8 @@
+import * as crypto from 'crypto';
+import { OrderPolicy, OrderStatus } from './orderPolicy';
+
+export { OrderStatus };
+
 // ============================================================================
 // ĐẶC TẢ KIỂU DỮ LIỆU VÀ GIAO DIỆN HỢP ĐỒNG (DOMAIN INTERFACES & CONTRACTS)
 // Issue: [B02] Xây dựng nghiệp vụ tạo đơn thanh toán
@@ -27,9 +32,8 @@ export interface DocumentSnapshot {
 }
 
 /**
- * 3. Trạng thái của đơn hàng theo vòng đời thanh toán
+ * 3. Trạng thái của đơn hàng (được import và re-export từ orderPolicy.ts)
  */
-export type OrderStatus = 'PENDING' | 'PAID' | 'EXPIRED' | 'REVIEW_REQUIRED';
 
 /**
  * 4. Cấu trúc Đơn hàng (Order DTO) trả về khi tạo hoặc tái sử dụng đơn thành công
@@ -95,9 +99,6 @@ export interface IOrderRepository {
     /** Lưu đơn hàng mới vào kho lưu trữ dữ liệu */
     saveOrder(order: OrderDTO, buyerId: string, idempotencyKey: string): Promise<void>;
 }
-
-import * as crypto from 'crypto';
-import { OrderPolicy } from './orderPolicy';
 
 /**
  * Hàm nghiệp vụ chính xử lý tạo đơn thanh toán (Pure Business Logic).

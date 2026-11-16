@@ -1,10 +1,14 @@
 import * as crypto from 'crypto';
-import { OrderStatus } from './createOrder';
 
 // ============================================================================
 // CHÍNH SÁCH ĐƠN HÀNG VÀ THANH TOÁN (ORDER & PAYMENT POLICY)
 // Issue: [B02] Xây dựng nghiệp vụ tạo đơn thanh toán
 // ============================================================================
+
+/**
+ * Trạng thái của đơn hàng theo vòng đời thanh toán
+ */
+export type OrderStatus = 'PENDING' | 'PAID' | 'EXPIRED' | 'REVIEW_REQUIRED';
 
 export class OrderPolicy {
     /**

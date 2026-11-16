@@ -1,3 +1,4 @@
+import * as assert from 'assert';
 import {
     CreateOrderRequest,
     DocumentSnapshot,
@@ -130,8 +131,6 @@ export class FakeOrderRepository implements IOrderRepository {
 // BỘ KIỂM THỬ ĐƠN VỊ TOÀN DIỆN (UNIT TEST SUITE: P01 & P05)
 // ============================================================================
 
-import * as assert from 'assert';
-
 /**
  * Hàm trợ giúp tạo tài liệu mẫu chuẩn
  */
@@ -187,8 +186,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-01: Tạo đơn hợp lệ thành công (201 Created, TTL 15p, giá server).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-01:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-01:', (err as Error).message);
         failed++;
     }
 
@@ -212,8 +211,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-02: Bất biến giá server bảo đảm toàn vẹn.');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-02:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-02:', (err as Error).message);
         failed++;
     }
 
@@ -237,8 +236,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-03: Chặn thành công tác giả tự mua tài liệu của mình (409 SELF_PURCHASE).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-03:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-03:', (err as Error).message);
         failed++;
     }
 
@@ -263,8 +262,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-04: Chặn thành công mua tài liệu đã sở hữu (409 ALREADY_OWNED).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-04:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-04:', (err as Error).message);
         failed++;
     }
 
@@ -286,8 +285,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-05: Xử lý chính xác tài liệu không tồn tại (404 DOCUMENT_NOT_FOUND).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-05:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-05:', (err as Error).message);
         failed++;
     }
 
@@ -318,8 +317,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-06: Chặn tài liệu DRAFT và ARCHIVED (400 INVALID_DOCUMENT_STATUS).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-06:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-06:', (err as Error).message);
         failed++;
     }
 
@@ -348,8 +347,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-07: Chặn giá <= 0 hoặc số không nguyên (400 INVALID_PRICE).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-07:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-07:', (err as Error).message);
         failed++;
     }
 
@@ -368,8 +367,8 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-08: Kiểm tra chặt chẽ dữ liệu đầu vào (400 INVALID_REQUEST).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-08:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-08:', (err as Error).message);
         failed++;
     }
 
@@ -411,8 +410,8 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-09: Idempotency replay khi bấm đúp thành công (200 OK cùng orderId).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-09:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-09:', (err as Error).message);
         failed++;
     }
 
@@ -436,8 +435,8 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-10: Phát hiện chính xác xung đột Idempotency (409 IDEMPOTENCY_CONFLICT).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-10:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-10:', (err as Error).message);
         failed++;
     }
 
@@ -461,8 +460,8 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-11: Khóa Active Order hoạt động chuẩn xác (tái sử dụng đơn PENDING còn hạn).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-11:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-11:', (err as Error).message);
         failed++;
     }
 
@@ -489,8 +488,8 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-12: Đơn quá hạn 15 phút được giải phóng, tạo thành công đơn mới.');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-12:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-12:', (err as Error).message);
         failed++;
     }
 
@@ -522,8 +521,8 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-13: Đơn đang đối soát bị chặn đúng quy định (409 ORDER_UNDER_REVIEW).');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-13:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-13:', (err as Error).message);
         failed++;
     }
 
@@ -544,8 +543,8 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
 
         console.log('  [PASS] TC-14: Kiểm tra định dạng Payment Code chuẩn xác.');
         passed++;
-    } catch (err: any) {
-        console.error('  [FAIL] TC-14:', err.message);
+    } catch (err) {
+        console.error('  [FAIL] TC-14:', (err as Error).message);
         failed++;
     }
 
@@ -575,11 +574,4 @@ export async function runAllTests(): Promise<void> {
     }
 }
 
-// Tự động chạy nếu file được gọi trực tiếp bằng Node/TS-Node
-if (require.main === module) {
-    runAllTests().catch((err) => {
-        console.error('Lỗi khi chạy test suite:', err);
-        process.exit(1);
-    });
-}
 
