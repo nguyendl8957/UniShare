@@ -30,3 +30,17 @@ local.properties
 # OS
 .DS_Store
 Thumbs.db
+
+
+# Personal instructions for Antigravity
+/AGENTS.md
+
+# Personal AI rules, skills, workflows and configurations
+/.agents/
+
+# =====================================
+# Local project documentation
+# =====================================
+
+# Ignore the entire local documentation folder
+/Doc/
