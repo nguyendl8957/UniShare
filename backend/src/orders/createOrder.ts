@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
-import { OrderPolicy, OrderStatus } from './orderPolicy';
+import { OrderPolicy, type OrderStatus } from './orderPolicy';
 
-export { OrderStatus };
+export type { OrderStatus };
 
 // ============================================================================
 // ĐẶC TẢ KIỂU DỮ LIỆU VÀ GIAO DIỆN HỢP ĐỒNG (DOMAIN INTERFACES & CONTRACTS)
@@ -37,17 +37,21 @@ export interface DocumentSnapshot {
 
 /**
  * 4. Cấu trúc Đơn hàng (Order DTO) trả về khi tạo hoặc tái sử dụng đơn thành công
+ * Chứa đầy đủ thông tin để lưu trữ, phục vụ đối soát và cấp quyền đọc tài liệu.
  */
 export interface OrderDTO {
     orderId: string;
-    docId: string;
+    buyerId: string;        // ID người mua (UID Firebase Auth, bắt buộc cho B03 cấp entitlement & kiểm quyền)
+    sellerId: string;       // ID người bán (UID Firebase Auth, bắt buộc cho B06 doanh thu)
+    docId: string;          // ID tài liệu
+    versionId: string;      // ID phiên bản tài liệu bán (bất biến, bắt buộc cho A06 tải PDF)
     documentTitle: string;
-    amountVnd: number;
+    amountVnd: number;      // Giá chụp từ snapshot server (VND)
     currency: 'VND';
     status: OrderStatus;
-    paymentCode: string; // Mã tham chiếu chuyển khoản (Ví dụ: UNIA1B2C3)
-    createdAt: string;   // Thời điểm tạo theo chuẩn UTC ISO 8601
-    expiresAt: string;   // Thời điểm hết hạn theo chuẩn UTC ISO 8601 (TTL 15 phút)
+    paymentCode: string;    // Mã tham chiếu chuyển khoản (Ví dụ: UNIA1B2C3)
+    createdAt: string;      // Thời điểm tạo theo chuẩn UTC ISO 8601
+    expiresAt: string;      // Thời điểm hết hạn theo chuẩn UTC ISO 8601 (TTL 15 phút)
 }
 
 /**
@@ -93,11 +97,20 @@ export interface IOrderRepository {
     /** Kiểm tra xem Idempotency Key này đã từng gắn với đơn hàng nào chưa */
     getOrderByKey(buyerId: string, idempotencyKey: string): Promise<OrderDTO | null>;
 
-    /** Lấy đơn hàng PENDING còn hiệu lực hiện tại cho cặp (buyerId, docId) */
+    /** Lấy đơn hàng PENDING còn hiệu lực hoặc đơn REVIEW_REQUIRED hiện tại cho cặp (buyerId, docId) */
     getActiveOrderForDoc(buyerId: string, docId: string): Promise<OrderDTO | null>;
 
-    /** Lưu đơn hàng mới vào kho lưu trữ dữ liệu */
-    saveOrder(order: OrderDTO, buyerId: string, idempotencyKey: string): Promise<void>;
+    /** 
+     * Lưu đơn hàng mới vào kho lưu trữ dữ liệu một cách nguyên tử (Atomic Check-and-Save).
+     * Adapter A07 (Firestore) thực thi hàm này trong 1 Firestore Transaction duy nhất:
+     * - Khóa và lưu idempotencyKey vào orderRequests
+     * - Khóa và cập nhật activePurchases cho cặp (buyerId, docId)
+     * - Lưu paymentCode vào paymentCodes
+     * - Lưu order vào orders
+     * Nếu xảy ra xung đột đồng thời (Race Condition), repository trả về đơn đã được tạo
+     * hoặc ném lỗi xung đột để bảo toàn tính nhất quán ACID.
+     */
+    saveOrder(order: OrderDTO, buyerId: string, idempotencyKey: string): Promise<OrderDTO | void>;
 }
 
 /**
@@ -254,7 +267,10 @@ export async function processOrderCreation(
 
     const newOrder: OrderDTO = {
         orderId,
+        buyerId,
+        sellerId: document.sellerId,
         docId: document.docId,
+        versionId: document.activeVersionId,
         documentTitle: document.title,
         amountVnd: document.priceVnd, // Chụp trực tiếp từ server
         currency: 'VND',
@@ -264,12 +280,33 @@ export async function processOrderCreation(
         expiresAt
     };
 
-    // Lưu vào kho dữ liệu
-    await repository.saveOrder(newOrder, buyerId, idempotencyKey);
+    // Lưu vào kho dữ liệu một cách nguyên tử (Atomic Check-and-Save)
+    try {
+        const savedOrder = (await repository.saveOrder(newOrder, buyerId, idempotencyKey)) || newOrder;
+        const isReused = savedOrder.orderId !== newOrder.orderId;
 
-    return {
-        statusCode: 201,
-        order: newOrder,
-        message: 'Tạo đơn hàng thanh toán mới thành công.'
-    };
+        return {
+            statusCode: isReused ? 200 : 201,
+            order: savedOrder,
+            message: isReused
+                ? 'Tái sử dụng đơn hàng thành công từ khóa Idempotency hoặc đơn đang có hiệu lực.'
+                : 'Tạo đơn hàng thanh toán mới thành công.'
+        };
+    } catch (error: any) {
+        if (error?.errorCode === 'IDEMPOTENCY_CONFLICT') {
+            return {
+                statusCode: 409,
+                errorCode: 'IDEMPOTENCY_CONFLICT',
+                message: error.message || 'Khóa Idempotency này đã được sử dụng cho một tài liệu khác.'
+            };
+        }
+        if (error?.errorCode === 'ORDER_UNDER_REVIEW') {
+            return {
+                statusCode: 409,
+                errorCode: 'ORDER_UNDER_REVIEW',
+                message: error.message || 'Đơn hàng trước đó của bạn đang trong quá trình đối soát, vui lòng chờ xử lý.'
+            };
+        }
+        throw error;
+    }
 }

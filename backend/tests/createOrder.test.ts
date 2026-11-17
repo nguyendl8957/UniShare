@@ -1,11 +1,11 @@
 import * as assert from 'assert';
 import {
-    CreateOrderRequest,
-    DocumentSnapshot,
-    IOrderRepository,
-    OrderDTO,
-    OrderResult,
-    OrderStatus,
+    type CreateOrderRequest,
+    type DocumentSnapshot,
+    type IOrderRepository,
+    type OrderDTO,
+    type OrderResult,
+    type OrderStatus,
     processOrderCreation
 } from '../src/orders/createOrder';
 import { OrderPolicy } from '../src/orders/orderPolicy';
@@ -86,9 +86,14 @@ export class FakeOrderRepository implements IOrderRepository {
     seedOrder(order: OrderDTO, buyerId: string, idempotencyKey: string): void {
         this.ordersById.set(order.orderId, order);
         this.ordersByIdempotencyKey.set(`${buyerId}:${idempotencyKey}`, order);
-        if (order.status === 'PENDING') {
+        if (order.status === 'PENDING' || order.status === 'REVIEW_REQUIRED') {
             this.activeOrdersByPair.set(`${buyerId}:${order.docId}`, order.orderId);
         }
+    }
+
+    /** Lấy toàn bộ danh sách đơn hàng đã lưu để kiểm tra tính nguyên tử (Không trùng lặp) */
+    getAllOrders(): OrderDTO[] {
+        return Array.from(this.ordersById.values());
     }
 
     // --- Triển khai các phương thức của IOrderRepository ---
@@ -112,6 +117,11 @@ export class FakeOrderRepository implements IOrderRepository {
         const order = this.ordersById.get(orderId);
         if (!order) return null;
 
+        // Nếu đơn hàng đang trong trạng thái REVIEW_REQUIRED, nó luôn được coi là active (khóa mua đè)
+        if (order.status === 'REVIEW_REQUIRED') {
+            return order;
+        }
+
         // Nếu đơn hàng đã hết hạn hoặc không còn PENDING, không còn là Active
         if (!OrderPolicy.isOrderActive(order.status, order.expiresAt, this.clock.now())) {
             return null;
@@ -120,10 +130,46 @@ export class FakeOrderRepository implements IOrderRepository {
         return order;
     }
 
-    async saveOrder(order: OrderDTO, buyerId: string, idempotencyKey: string): Promise<void> {
+    /**
+     * Mô phỏng cơ chế khóa Transaction nguyên tử của Adapter A07 (Firestore Transaction).
+     * Khi có 2 request chạy đồng thời:
+     * - Nếu idempotencyKey đã được lưu bởi request cùng lượt: trả về đơn đã lưu (Idempotency Replay).
+     * - Nếu đã có đơn active đang PENDING còn hạn cho cặp (buyerId, docId): trả về đơn active đó.
+     * - Nếu đơn cũ là REVIEW_REQUIRED: báo lỗi xung đột ORDER_UNDER_REVIEW.
+     */
+    async saveOrder(order: OrderDTO, buyerId: string, idempotencyKey: string): Promise<OrderDTO> {
+        const key = `${buyerId}:${idempotencyKey}`;
+        const existingByKey = this.ordersByIdempotencyKey.get(key);
+        if (existingByKey) {
+            if (existingByKey.docId !== order.docId) {
+                const err: any = new Error('Khóa Idempotency này đã được sử dụng cho một tài liệu khác.');
+                err.errorCode = 'IDEMPOTENCY_CONFLICT';
+                throw err;
+            }
+            return existingByKey;
+        }
+
+        const pairKey = `${buyerId}:${order.docId}`;
+        const existingOrderId = this.activeOrdersByPair.get(pairKey);
+        if (existingOrderId) {
+            const existingOrder = this.ordersById.get(existingOrderId);
+            if (existingOrder) {
+                if (existingOrder.status === 'REVIEW_REQUIRED') {
+                    const err: any = new Error('Đơn hàng trước đó của bạn đang trong quá trình đối soát, vui lòng chờ xử lý.');
+                    err.errorCode = 'ORDER_UNDER_REVIEW';
+                    throw err;
+                }
+                if (OrderPolicy.isOrderActive(existingOrder.status, existingOrder.expiresAt, this.clock.now())) {
+                    return existingOrder;
+                }
+            }
+        }
+
+        // Lưu nguyên tử vào các collection
         this.ordersById.set(order.orderId, order);
-        this.ordersByIdempotencyKey.set(`${buyerId}:${idempotencyKey}`, order);
-        this.activeOrdersByPair.set(`${buyerId}:${order.docId}`, order.orderId);
+        this.ordersByIdempotencyKey.set(key, order);
+        this.activeOrdersByPair.set(pairKey, order.orderId);
+        return order;
     }
 }
 
@@ -173,6 +219,9 @@ export async function runP01Tests(): Promise<{ passed: number; failed: number }>
         assert.strictEqual(result.statusCode, 201, 'Mã HTTP phải là 201 Created');
         assert.ok(result.order, 'Đơn hàng phải tồn tại');
         assert.strictEqual(result.order.docId, doc.docId);
+        assert.strictEqual(result.order.buyerId, request.buyerId, 'buyerId phải chụp đúng từ request');
+        assert.strictEqual(result.order.sellerId, doc.sellerId, 'sellerId phải chụp đúng từ snapshot server');
+        assert.strictEqual(result.order.versionId, doc.activeVersionId, 'versionId phải chụp đúng từ snapshot server');
         assert.strictEqual(result.order.documentTitle, doc.title);
         assert.strictEqual(result.order.amountVnd, 50000, 'Giá phải chụp đúng từ server (50.000 đ)');
         assert.strictEqual(result.order.currency, 'VND');
@@ -503,7 +552,10 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
         // Nạp đơn REVIEW_REQUIRED sẵn có
         const reviewOrder: OrderDTO = {
             orderId: 'ord-review-123',
+            buyerId: 'buyer-review',
+            sellerId: doc.sellerId,
             docId: doc.docId,
+            versionId: doc.activeVersionId,
             documentTitle: doc.title,
             amountVnd: doc.priceVnd,
             currency: 'VND',
@@ -548,6 +600,196 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
         failed++;
     }
 
+    // TC-15: Concurrency - Hai request cùng Idempotency Key chạy đồng thời (Promise.all)
+    try {
+        const clock = new FakeClock();
+        const repo = new FakeOrderRepository(clock);
+        const doc = createSampleDocument();
+        repo.seedDocument(doc);
+
+        const request: CreateOrderRequest = {
+            buyerId: 'buyer-concurrent-same-key',
+            docId: doc.docId,
+            idempotencyKey: 'key-concurrent-double-click'
+        };
+
+        // Kích hoạt đồng thời 2 request tạo đơn (Mô phỏng 2 luồng đến server cùng mili-giây)
+        const [resA, resB] = await Promise.all([
+            processOrderCreation(request, repo, clock.now()),
+            processOrderCreation(request, repo, clock.now())
+        ]);
+
+        // Cả 2 request đều phải thành công (1 cái 201 Created, 1 cái 200 Replay Idempotent, hoặc cả 2 trả về cùng đơn)
+        assert.ok(resA.statusCode === 201 || resA.statusCode === 200, 'Request A phải thành công');
+        assert.ok(resB.statusCode === 201 || resB.statusCode === 200, 'Request B phải thành công');
+
+        // Bất biến nguyên tử: Cả 2 phải trả về cùng 1 orderId duy nhất
+        assert.strictEqual(resA.order?.orderId, resB.order?.orderId, 'Cả 2 request đồng thời phải nhận cùng orderId');
+        assert.strictEqual(resA.order?.paymentCode, resB.order?.paymentCode, 'Mã thanh toán phải giống nhau');
+
+        // Bất biến dữ liệu: Trong kho chỉ tồn tại duy nhất 1 đơn hàng (Không bị duplicate)
+        const allOrders = repo.getAllOrders();
+        assert.strictEqual(allOrders.length, 1, 'Kho dữ liệu chỉ được phép chứa duy nhất 1 đơn hàng');
+        assert.strictEqual(allOrders[0].orderId, resA.order?.orderId);
+
+        console.log('  [PASS] TC-15: Concurrency - 2 request cùng Idempotency Key chạy đồng thời bảo đảm atomic (chỉ 1 đơn duy nhất).');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-15:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-16: Concurrency - Hai request khác Idempotency Key nhưng cùng (buyerId, docId) chạy đồng thời
+    try {
+        const clock = new FakeClock();
+        const repo = new FakeOrderRepository(clock);
+        const doc = createSampleDocument();
+        repo.seedDocument(doc);
+
+        const req1: CreateOrderRequest = {
+            buyerId: 'buyer-concurrent-diff-keys',
+            docId: doc.docId,
+            idempotencyKey: 'key-race-alpha'
+        };
+
+        const req2: CreateOrderRequest = {
+            buyerId: 'buyer-concurrent-diff-keys',
+            docId: doc.docId,
+            idempotencyKey: 'key-race-beta'
+        };
+
+        // Gửi đồng thời 2 request với 2 key khác nhau cho cùng tài liệu
+        const [res1, res2] = await Promise.all([
+            processOrderCreation(req1, repo, clock.now()),
+            processOrderCreation(req2, repo, clock.now())
+        ]);
+
+        // Một request sẽ tạo mới (201), request thứ hai sẽ nhận đơn active còn hạn (200 OK)
+        const statusCodes = [res1.statusCode, res2.statusCode].sort();
+        assert.deepStrictEqual(statusCodes, [200, 201], 'Phải có đúng một 201 Created và một 200 OK (Tái sử dụng đơn active)');
+
+        // Bất biến: Cả 2 đều tham chiếu đến cùng 1 đơn hàng
+        assert.strictEqual(res1.order?.orderId, res2.order?.orderId, 'Cả 2 phải dùng chung orderId của đơn active');
+
+        // Bất biến lưu trữ: Tuyệt đối không sinh 2 đơn PENDING đồng thời trong kho
+        const allOrders = repo.getAllOrders();
+        assert.strictEqual(allOrders.length, 1, 'Kho dữ liệu chỉ được phép lưu duy nhất 1 đơn PENDING active');
+
+        console.log('  [PASS] TC-16: Concurrency - 2 request khác key cùng (buyer, doc) chạy đồng thời không tạo đơn trùng.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-16:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-17: Rollback / Lỗi khi lưu đơn (Failure Handling)
+    try {
+        const clock = new FakeClock();
+        const repo = new FakeOrderRepository(clock);
+        const doc = createSampleDocument();
+        repo.seedDocument(doc);
+
+        // Giả lập lỗi khi lưu dữ liệu (mô phỏng database transaction failure / network abort)
+        repo.saveOrder = async () => {
+            throw new Error('Firestore Transaction aborted: Quá tải hệ thống');
+        };
+
+        let threw = false;
+        try {
+            await processOrderCreation(
+                { buyerId: 'buyer-fail', docId: doc.docId, idempotencyKey: 'key-fail' },
+                repo,
+                clock.now()
+            );
+        } catch (err: any) {
+            threw = true;
+            assert.ok(err.message.includes('Firestore Transaction aborted'));
+        }
+
+        assert.strictEqual(threw, true, 'Hàm phải ném lỗi khi transaction rollback');
+        assert.strictEqual(repo.getAllOrders().length, 0, 'Không có đơn nào bị lưu dở dang');
+
+        console.log('  [PASS] TC-17: Xử lý lỗi và bảo toàn tính toàn vẹn khi transaction thất bại.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-17:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-18: Tương thích Hợp đồng dữ liệu với Module B03 (Entitlement compatibility)
+    try {
+        const clock = new FakeClock();
+        const repo = new FakeOrderRepository(clock);
+        const doc = createSampleDocument();
+        repo.seedDocument(doc);
+
+        const request: CreateOrderRequest = {
+            buyerId: 'buyer-user-uid-firebase-12345',
+            docId: doc.docId,
+            idempotencyKey: 'key-b03-compat'
+        };
+
+        const result = await processOrderCreation(request, repo, clock.now());
+        assert.strictEqual(result.statusCode, 201);
+        const order = result.order!;
+
+        // Mô phỏng hợp đồng OrderSnapshot của module B03 (matchPayment.ts):
+        // B03 đọc: orderId, buyerId, docId, amountVnd, status, paymentCode, createdAt, expiresAt
+        assert.ok(order.buyerId, 'B03 bắt buộc cần buyerId để cấp entitlement');
+        assert.strictEqual(order.buyerId, 'buyer-user-uid-firebase-12345');
+        assert.ok(order.sellerId, 'Cần sellerId để tính doanh thu');
+        assert.ok(order.versionId, 'Cần versionId để cấp đúng phiên bản PDF');
+
+        // B03 tạo entitlement: { uid: order.buyerId, docId: order.docId, orderId: order.orderId, grantedAt: nowIso }
+        const entitlementRecord = {
+            uid: order.buyerId,
+            docId: order.docId,
+            orderId: order.orderId,
+            grantedAt: new Date(clock.now()).toISOString()
+        };
+        assert.strictEqual(entitlementRecord.uid, request.buyerId);
+        assert.strictEqual(entitlementRecord.orderId, order.orderId);
+
+        console.log('  [PASS] TC-18: Hợp đồng OrderDTO đáp ứng đầy đủ dữ liệu cho B03 cấp entitlement.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-18:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-19: Concurrency - Hai request cùng Idempotency Key nhưng khác docId chạy đồng thời -> 409
+    try {
+        const clock = new FakeClock();
+        const repo = new FakeOrderRepository(clock);
+        const doc1 = createSampleDocument({ docId: 'doc-alpha' });
+        const doc2 = createSampleDocument({ docId: 'doc-beta' });
+        repo.seedDocument(doc1);
+        repo.seedDocument(doc2);
+
+        const reqA = { buyerId: 'buyer-race-conflict', docId: 'doc-alpha', idempotencyKey: 'same-conflict-key' };
+        const reqB = { buyerId: 'buyer-race-conflict', docId: 'doc-beta', idempotencyKey: 'same-conflict-key' };
+
+        const [resA, resB] = await Promise.all([
+            processOrderCreation(reqA, repo, clock.now()),
+            processOrderCreation(reqB, repo, clock.now())
+        ]);
+
+        // Một request thành công (201), request thứ hai cố tình dùng cùng key cho doc khác phải bị 409 IDEMPOTENCY_CONFLICT
+        const results = [resA, resB];
+        const successRes = results.find(r => r.statusCode === 201);
+        const conflictRes = results.find(r => r.statusCode === 409);
+
+        assert.ok(successRes, 'Một request phải thành công');
+        assert.ok(conflictRes, 'Request xung đột docId phải bị từ chối 409');
+        assert.strictEqual(conflictRes?.errorCode, 'IDEMPOTENCY_CONFLICT');
+
+        console.log('  [PASS] TC-19: Concurrency - Chặn xung đột Idempotency khi 2 request khác docId chạy đồng thời.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-19:', (err as Error).message);
+        failed++;
+    }
+
     return { passed, failed };
 }
 
@@ -573,5 +815,14 @@ export async function runAllTests(): Promise<void> {
         throw new Error(`Có ${totalFailed} bài kiểm thử thất bại!`);
     }
 }
+
+// Tự động chạy khi được gọi trực tiếp bằng Node/tsx
+if (typeof process !== 'undefined' && process.argv[1] && process.argv[1].includes('createOrder.test')) {
+    runAllTests().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}
+
 
 
