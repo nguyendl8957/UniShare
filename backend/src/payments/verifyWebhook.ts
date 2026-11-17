@@ -123,36 +123,70 @@ export function extractPaymentCodeFromContent(content: string): {
 
 /**
  * Chuyển đổi chuỗi thời gian của ngân hàng (thường là giờ Việt Nam UTC+7: 'YYYY-MM-DD HH:mm:ss')
- * sang định dạng chuẩn quốc tế UTC ISO 8601 (ví dụ: '2026-11-17T02:30:00.000Z').
+ * sang định dạng chuẩn quốc tế UTC ISO 8601 (ví dụ: '2026-11-17T03:05:00.000Z').
+ * 
+ * Quy tắc an toàn:
+ * 1. Phải kiểm tra cấu trúc chuỗi ngày tháng chính xác.
+ * 2. Xác thực tính có thực của ngày (ví dụ: không cho phép 31/02 hay 31/04).
+ * 3. Chuẩn hóa theo múi giờ Việt Nam (UTC+7) nếu không có chỉ định múi giờ.
+ * 4. TUYỆT ĐỐI KHÔNG sử dụng new Date() hoặc thời gian hiện tại làm fallback khi chuỗi không hợp lệ,
+ *    để tránh làm sai lệch việc kiểm tra thời hạn TTL 15 phút của đơn hàng.
  * 
  * @param dateStr Chuỗi ngày giờ từ SePay
- * @returns Chuỗi ISO 8601 hoặc chuỗi thời gian hiện tại nếu chuỗi đầu vào không hợp lệ
+ * @returns Chuỗi ISO 8601 UTC hợp lệ hoặc null nếu không thể parse / không hợp lệ
  */
-export function parseBankTimeToIso(dateStr: string): string {
+export function parseBankTimeToIso(dateStr: string): string | null {
     if (!dateStr || typeof dateStr !== 'string') {
-        return new Date().toISOString();
+        return null;
     }
 
     const trimmed = dateStr.trim();
-
-    // Nếu chuỗi đã có chỉ định múi giờ rõ ràng (có chữ 'Z' hoặc có dấu '+' hay '-' sau phần giờ)
-    if (trimmed.includes('Z') || /[0-9]{2}:[0-9]{2}:[0-9]{2}[+-]/.test(trimmed)) {
-        const parsed = new Date(trimmed);
-        if (!isNaN(parsed.getTime())) return parsed.toISOString();
+    if (!trimmed) {
+        return null;
     }
 
-    // Trường hợp SePay trả về dạng 'YYYY-MM-DD HH:mm:ss' hoặc 'YYYY-MM-DDTHH:mm:ss' (Múi giờ Việt Nam UTC+7)
-    // Thay khoảng trắng bằng 'T' và bổ sung offset múi giờ Việt Nam +07:00
-    const normalized = trimmed.replace(' ', 'T');
-    const withVnTimezone = `${normalized}+07:00`;
+    // Trường hợp chuỗi đã có chỉ định múi giờ rõ ràng (chứa 'Z' hoặc offset '+HH:mm'/'-HH:mm')
+    if (trimmed.includes('Z') || /[0-9]{2}:[0-9]{2}:[0-9]{2}[+-]/.test(trimmed)) {
+        const parsed = new Date(trimmed);
+        if (!isNaN(parsed.getTime())) {
+            return parsed.toISOString();
+        }
+        return null;
+    }
+
+    // Trường hợp SePay trả về dạng 'YYYY-MM-DD HH:mm:ss' hoặc 'YYYY-MM-DDTHH:mm:ss' (Giờ Việt Nam UTC+7)
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+    if (!match) {
+        return null;
+    }
+
+    const year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    const day = parseInt(match[3], 10);
+    const hour = parseInt(match[4], 10);
+    const minute = parseInt(match[5], 10);
+    const second = parseInt(match[6], 10);
+
+    // Kiểm tra giới hạn giờ, phút, giây, tháng, năm
+    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+        return null;
+    }
+
+    // Xác thực số ngày tối đa trong tháng (bao gồm năm nhuận) để ngăn chặn bug ngày cuộn (Date Rollover)
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (day > daysInMonth) {
+        return null;
+    }
+
+    // Định dạng ISO với múi giờ Việt Nam +07:00
+    const withVnTimezone = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}+07:00`;
     const parsedWithTz = new Date(withVnTimezone);
 
     if (!isNaN(parsedWithTz.getTime())) {
         return parsedWithTz.toISOString();
     }
 
-    // Fallback an toàn nếu chuỗi ngày giờ bị lỗi định dạng
-    return new Date().toISOString();
+    return null;
 }
 
 /**
@@ -203,7 +237,7 @@ export function verifyWebhookSignature(
     // ------------------------------------------------------------------------
     // BƯỚC 1: Kiểm tra Secret Key trên Runtime
     // ------------------------------------------------------------------------
-    if (!secretKey) {
+    if (!secretKey || typeof secretKey !== 'string' || !secretKey.trim()) {
         return {
             isValid: false,
             statusCode: 503,
@@ -215,10 +249,17 @@ export function verifyWebhookSignature(
     // ------------------------------------------------------------------------
     // BƯỚC 2: Kiểm tra Header bắt buộc
     // ------------------------------------------------------------------------
-    const signature = getHeaderValue(headers, 'x-sepay-signature');
+    const signatureHeader = getHeaderValue(headers, 'x-sepay-signature');
     const timestampStr = getHeaderValue(headers, 'x-sepay-timestamp');
 
-    if (!signature || !timestampStr) {
+    if (
+        !signatureHeader ||
+        typeof signatureHeader !== 'string' ||
+        !signatureHeader.trim() ||
+        !timestampStr ||
+        typeof timestampStr !== 'string' ||
+        !timestampStr.trim()
+    ) {
         return {
             isValid: false,
             statusCode: 400,
@@ -230,8 +271,9 @@ export function verifyWebhookSignature(
     // ------------------------------------------------------------------------
     // BƯỚC 3: Kiểm tra Timestamp & Cửa sổ trôi thời gian (5 phút)
     // ------------------------------------------------------------------------
-    const timestampNum = Number(timestampStr);
-    if (isNaN(timestampNum) || timestampNum <= 0) {
+    const cleanTimestampStr = timestampStr.trim();
+    const timestampNum = Number(cleanTimestampStr);
+    if (isNaN(timestampNum) || !Number.isFinite(timestampNum) || timestampNum <= 0) {
         return {
             isValid: false,
             statusCode: 400,
@@ -241,8 +283,8 @@ export function verifyWebhookSignature(
     }
 
     // Timestamp của SePay thường tính bằng giây (Unix timestamp in seconds)
-    // Nếu timestamp là giây (độ dài <= 10 chữ số), đổi sang mili-giây
-    const timestampMs = timestampStr.length <= 10 ? timestampNum * 1000 : timestampNum;
+    // Nếu timestamp là giây (< 100 tỷ), đổi sang mili-giây
+    const timestampMs = timestampNum < 100_000_000_000 ? timestampNum * 1000 : timestampNum;
     const timeDiffMs = Math.abs(currentTimeMs - timestampMs);
     const maxToleranceMs = SIGNATURE_TOLERANCE_SECONDS * 1000;
 
@@ -256,11 +298,18 @@ export function verifyWebhookSignature(
     }
 
     // ------------------------------------------------------------------------
-    // BƯỚC 4: Tính toán chữ ký HMAC-SHA256 trên chuỗi `${timestamp}.${rawBody}`
+    // BƯỚC 4: Tính toán chữ ký HMAC-SHA256 trên chuỗi `${cleanTimestampStr}.${rawBody}`
     // ------------------------------------------------------------------------
-    const payloadToSign = `${timestampStr}.${rawBody}`;
+    // Hỗ trợ cả định dạng chữ ký chuẩn tài liệu SePay: 'sha256={hex}' hoặc '{hex}' thuần (không phân biệt hoa thường)
+    let actualSignature = signatureHeader.trim();
+    if (actualSignature.toLowerCase().startsWith('sha256=')) {
+        actualSignature = actualSignature.slice(7).trim();
+    }
+    actualSignature = actualSignature.toLowerCase();
+
+    const payloadToSign = `${cleanTimestampStr}.${rawBody}`;
     const expectedSignature = crypto
-        .createHmac('sha256', secretKey)
+        .createHmac('sha256', secretKey.trim())
         .update(payloadToSign)
         .digest('hex');
 
@@ -268,7 +317,7 @@ export function verifyWebhookSignature(
     // BƯỚC 5: So sánh Constant-Time (Phòng chống Timing Attack)
     // ------------------------------------------------------------------------
     const expectedBuffer = Buffer.from(expectedSignature, 'utf-8');
-    const actualBuffer = Buffer.from(signature, 'utf-8');
+    const actualBuffer = Buffer.from(actualSignature, 'utf-8');
 
     // timingSafeEqual bắt buộc 2 Buffer phải có cùng độ dài (byte length)
     if (expectedBuffer.length !== actualBuffer.length) {
@@ -305,31 +354,88 @@ export function verifyWebhookSignature(
         };
     }
 
-    // Kiểm tra các trường tối thiểu cần có
-    if (!parsedPayload.id || typeof parsedPayload.transferAmount !== 'number') {
+    if (!parsedPayload || typeof parsedPayload !== 'object' || Array.isArray(parsedPayload)) {
         return {
             isValid: false,
             statusCode: 400,
             errorCode: 'INVALID_PAYLOAD',
-            message: 'Dữ liệu webhook thiếu trường id hoặc transferAmount.'
+            message: 'Dữ liệu payload của webhook phải là một JSON Object hợp lệ.'
         };
     }
 
     // ------------------------------------------------------------------------
-    // BƯỚC 7: Chuẩn hóa dữ liệu sang NormalizedWebhookEvent
+    // BƯỚC 7: Xác thực chặt chẽ các trường nghiệp vụ bắt buộc
     // ------------------------------------------------------------------------
-    const { code, hasMultipleCodes } = extractPaymentCodeFromContent(parsedPayload.content);
+    // 7.1. Kiểm tra ID giao dịch
+    if (
+        parsedPayload.id === undefined ||
+        parsedPayload.id === null ||
+        String(parsedPayload.id).trim() === ''
+    ) {
+        return {
+            isValid: false,
+            statusCode: 400,
+            errorCode: 'INVALID_PAYLOAD',
+            message: 'Dữ liệu webhook thiếu trường id giao dịch bắt buộc.'
+        };
+    }
+
+    // 7.2. Kiểm tra số tiền chuyển (transferAmount):
+    // Phải là số nguyên dương VND (> 0), không chấp nhận float, số âm, 0, NaN, Infinity.
+    // TUYỆT ĐỐI KHÔNG dùng Math.round để biến dữ liệu sai thành dữ liệu hợp lệ.
+    const rawTransferAmount = parsedPayload.transferAmount;
+    if (
+        typeof rawTransferAmount !== 'number' ||
+        !Number.isFinite(rawTransferAmount) ||
+        !Number.isInteger(rawTransferAmount) ||
+        rawTransferAmount <= 0 ||
+        rawTransferAmount > Number.MAX_SAFE_INTEGER
+    ) {
+        return {
+            isValid: false,
+            statusCode: 400,
+            errorCode: 'INVALID_PAYLOAD',
+            message: 'Số tiền giao dịch (transferAmount) không hợp lệ. Phải là số nguyên dương VND.'
+        };
+    }
+
+    // 7.3. Kiểm tra thời gian giao dịch phía ngân hàng (transactionDate):
+    // Bắt buộc phải có và phải đúng định dạng chuẩn ngân hàng / SePay.
+    // TUYỆT ĐỐI KHÔNG tự tiện lấy thời gian hiện tại làm fallback.
+    if (!parsedPayload.transactionDate || typeof parsedPayload.transactionDate !== 'string') {
+        return {
+            isValid: false,
+            statusCode: 400,
+            errorCode: 'INVALID_PAYLOAD',
+            message: 'Dữ liệu webhook thiếu trường transactionDate bắt buộc.'
+        };
+    }
+
+    const bankOccurredAtIso = parseBankTimeToIso(parsedPayload.transactionDate);
+    if (!bankOccurredAtIso) {
+        return {
+            isValid: false,
+            statusCode: 400,
+            errorCode: 'INVALID_PAYLOAD',
+            message: 'Thời gian giao dịch ngân hàng (transactionDate) không hợp lệ hoặc sai định dạng.'
+        };
+    }
+
+    // ------------------------------------------------------------------------
+    // BƯỚC 8: Chuẩn hóa dữ liệu sang NormalizedWebhookEvent
+    // ------------------------------------------------------------------------
+    const { code, hasMultipleCodes } = extractPaymentCodeFromContent(parsedPayload.content || '');
 
     const normalizedEvent: NormalizedWebhookEvent = {
         provider: 'SEPAY',
-        providerTxnId: String(parsedPayload.id),
-        amountVnd: Math.round(parsedPayload.transferAmount),
-        recipientAccountNumber: String(parsedPayload.accountNumber || ''),
-        direction: (parsedPayload.transferType || '').toLowerCase() === 'in' ? 'IN' : 'OUT',
-        content: parsedPayload.content || '',
+        providerTxnId: String(parsedPayload.id).trim(),
+        amountVnd: rawTransferAmount, // Giữ nguyên số nguyên VND hợp lệ, không qua Math.round
+        recipientAccountNumber: String(parsedPayload.accountNumber || '').trim(),
+        direction: (parsedPayload.transferType || '').trim().toLowerCase() === 'in' ? 'IN' : 'OUT',
+        content: String(parsedPayload.content || ''),
         paymentCode: code,
         hasMultipleCodes,
-        bankOccurredAt: parseBankTimeToIso(parsedPayload.transactionDate),
+        bankOccurredAt: bankOccurredAtIso,
         signatureVerifiedAt: new Date(currentTimeMs).toISOString(),
         rawPayload: parsedPayload
     };
@@ -340,4 +446,4 @@ export function verifyWebhookSignature(
         event: normalizedEvent,
         message: 'Xác thực chữ ký webhook SePay thành công.'
     };
-}
+};

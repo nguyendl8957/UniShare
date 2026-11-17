@@ -386,6 +386,237 @@ export async function runP02Tests(): Promise<{ passed: number; failed: number }>
         failed++;
     }
 
+    // TC-08b: Chữ ký có tiền tố 'sha256=' theo tài liệu chính thức SePay -> Xác thực thành công 200 OK
+    try {
+        const payloadObj = createSampleSePayPayload();
+        const rawBody = JSON.stringify(payloadObj);
+        const timestamp = Math.floor(clock.now() / 1000);
+        const validSig = generateValidSignature(rawBody, timestamp);
+        const signatureWithPrefix = `sha256=${validSig}`;
+
+        const headers = {
+            'x-sepay-signature': signatureWithPrefix,
+            'x-sepay-timestamp': String(timestamp)
+        };
+
+        const result = verifyWebhookSignature(rawBody, headers, TEST_SECRET_KEY, clock.now());
+
+        assert.strictEqual(result.isValid, true);
+        assert.strictEqual(result.statusCode, 200);
+        assert.ok(result.event);
+        assert.strictEqual(result.event?.amountVnd, 50000);
+
+        console.log('  [PASS] TC-08b: Chữ ký định dạng sha256={hex} theo tài liệu SePay được xử lý chính xác (200 OK).');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08b:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08c: transferAmount là số thập phân (50000.5, 49999.6) -> Bị từ chối 400 INVALID_PAYLOAD (Không Math.round)
+    try {
+        const payloadFloat = createSampleSePayPayload({ transferAmount: 50000.5 });
+        const rawBodyFloat = JSON.stringify(payloadFloat);
+        const timestamp = Math.floor(clock.now() / 1000);
+        const sigFloat = generateValidSignature(rawBodyFloat, timestamp);
+
+        const resultFloat = verifyWebhookSignature(
+            rawBodyFloat,
+            { 'x-sepay-signature': sigFloat, 'x-sepay-timestamp': String(timestamp) },
+            TEST_SECRET_KEY,
+            clock.now()
+        );
+
+        assert.strictEqual(resultFloat.isValid, false, 'Số tiền thập phân phải bị từ chối');
+        assert.strictEqual(resultFloat.statusCode, 400);
+        assert.strictEqual(resultFloat.errorCode, 'INVALID_PAYLOAD');
+
+        console.log('  [PASS] TC-08c: Số tiền thập phân (float) bị từ chối chính xác, không dùng Math.round để hợp lệ hóa.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08c:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08d: transferAmount là số âm (-50000) hoặc bằng 0 -> Bị từ chối 400 INVALID_PAYLOAD
+    try {
+        const timestamp = Math.floor(clock.now() / 1000);
+
+        // Số âm
+        const payloadNeg = createSampleSePayPayload({ transferAmount: -50000 });
+        const rawBodyNeg = JSON.stringify(payloadNeg);
+        const resNeg = verifyWebhookSignature(
+            rawBodyNeg,
+            { 'x-sepay-signature': generateValidSignature(rawBodyNeg, timestamp), 'x-sepay-timestamp': String(timestamp) },
+            TEST_SECRET_KEY,
+            clock.now()
+        );
+        assert.strictEqual(resNeg.isValid, false);
+        assert.strictEqual(resNeg.statusCode, 400);
+        assert.strictEqual(resNeg.errorCode, 'INVALID_PAYLOAD');
+
+        // Bằng 0
+        const payloadZero = createSampleSePayPayload({ transferAmount: 0 });
+        const rawBodyZero = JSON.stringify(payloadZero);
+        const resZero = verifyWebhookSignature(
+            rawBodyZero,
+            { 'x-sepay-signature': generateValidSignature(rawBodyZero, timestamp), 'x-sepay-timestamp': String(timestamp) },
+            TEST_SECRET_KEY,
+            clock.now()
+        );
+        assert.strictEqual(resZero.isValid, false);
+        assert.strictEqual(resZero.statusCode, 400);
+        assert.strictEqual(resZero.errorCode, 'INVALID_PAYLOAD');
+
+        console.log('  [PASS] TC-08d: Số tiền âm hoặc bằng 0 bị từ chối 400 INVALID_PAYLOAD.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08d:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08e: transferAmount là NaN hoặc Infinity -> Bị từ chối 400 INVALID_PAYLOAD
+    try {
+        const timestamp = Math.floor(clock.now() / 1000);
+
+        // Payload chứa chuỗi đại diện cho NaN hoặc số không hợp lệ
+        const rawBodyNaN = '{"id":123,"transferAmount":"not_a_number","transactionDate":"2026-11-17 10:05:00"}';
+        const resNaN = verifyWebhookSignature(
+            rawBodyNaN,
+            { 'x-sepay-signature': generateValidSignature(rawBodyNaN, timestamp), 'x-sepay-timestamp': String(timestamp) },
+            TEST_SECRET_KEY,
+            clock.now()
+        );
+        assert.strictEqual(resNaN.isValid, false);
+        assert.strictEqual(resNaN.statusCode, 400);
+        assert.strictEqual(resNaN.errorCode, 'INVALID_PAYLOAD');
+
+        console.log('  [PASS] TC-08e: Dữ liệu tiền không phải số / NaN bị từ chối 400 INVALID_PAYLOAD.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08e:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08f: transactionDate bị thiếu hoặc sai format -> Bị từ chối 400 INVALID_PAYLOAD
+    try {
+        const timestamp = Math.floor(clock.now() / 1000);
+
+        // Thiếu transactionDate
+        const rawBodyMissingDate = JSON.stringify({ id: 123, transferAmount: 50000 });
+        const resMissing = verifyWebhookSignature(
+            rawBodyMissingDate,
+            { 'x-sepay-signature': generateValidSignature(rawBodyMissingDate, timestamp), 'x-sepay-timestamp': String(timestamp) },
+            TEST_SECRET_KEY,
+            clock.now()
+        );
+        assert.strictEqual(resMissing.isValid, false);
+        assert.strictEqual(resMissing.statusCode, 400);
+        assert.strictEqual(resMissing.errorCode, 'INVALID_PAYLOAD');
+
+        // transactionDate sai format ('invalid-date')
+        const rawBodyInvalidDate = JSON.stringify(createSampleSePayPayload({ transactionDate: 'invalid-date' }));
+        const resInvalid = verifyWebhookSignature(
+            rawBodyInvalidDate,
+            { 'x-sepay-signature': generateValidSignature(rawBodyInvalidDate, timestamp), 'x-sepay-timestamp': String(timestamp) },
+            TEST_SECRET_KEY,
+            clock.now()
+        );
+        assert.strictEqual(resInvalid.isValid, false);
+        assert.strictEqual(resInvalid.statusCode, 400);
+        assert.strictEqual(resInvalid.errorCode, 'INVALID_PAYLOAD');
+
+        // Ngày không tồn tại trên lịch (2026-02-31)
+        const rawBodyRollover = JSON.stringify(createSampleSePayPayload({ transactionDate: '2026-02-31 10:00:00' }));
+        const resRollover = verifyWebhookSignature(
+            rawBodyRollover,
+            { 'x-sepay-signature': generateValidSignature(rawBodyRollover, timestamp), 'x-sepay-timestamp': String(timestamp) },
+            TEST_SECRET_KEY,
+            clock.now()
+        );
+        assert.strictEqual(resRollover.isValid, false);
+        assert.strictEqual(resRollover.statusCode, 400);
+        assert.strictEqual(resRollover.errorCode, 'INVALID_PAYLOAD');
+
+        console.log('  [PASS] TC-08f: transactionDate thiếu hoặc sai định dạng bị từ chối 400 INVALID_PAYLOAD.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08f:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08g: Helper parseBankTimeToIso xác thực chính xác, không dùng fallback thời gian hiện tại
+    try {
+        // Chuỗi rỗng -> trả về null
+        assert.strictEqual(parseBankTimeToIso(''), null);
+        assert.strictEqual(parseBankTimeToIso('   '), null);
+
+        // Chuỗi sai format -> trả về null
+        assert.strictEqual(parseBankTimeToIso('not-a-date'), null);
+        assert.strictEqual(parseBankTimeToIso('17/11/2026 10:00:00'), null);
+
+        // Ngày không có thực -> trả về null
+        assert.strictEqual(parseBankTimeToIso('2026-02-31 10:00:00'), null);
+        assert.strictEqual(parseBankTimeToIso('2026-04-31 10:00:00'), null);
+
+        // Định dạng chuẩn SePay: 2026-11-17 10:05:00 (Giờ VN UTC+7) -> Chuyển sang UTC đúng
+        const iso = parseBankTimeToIso('2026-11-17 10:05:00');
+        assert.strictEqual(iso, '2026-11-17T03:05:00.000Z', 'Giờ VN 10:05:00 phải đổi thành UTC 03:05:00');
+
+        console.log('  [PASS] TC-08g: Helper parseBankTimeToIso chuyển đổi chuẩn UTC+7 sang UTC ISO, trả về null khi lỗi.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08g:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08h: Chữ ký HMAC dạng chữ hoa (uppercase/mixed case) -> Vẫn so sánh thành công (case-insensitive)
+    try {
+        const payloadObj = createSampleSePayPayload();
+        const rawBody = JSON.stringify(payloadObj);
+        const timestamp = Math.floor(clock.now() / 1000);
+        const validSig = generateValidSignature(rawBody, timestamp);
+        const uppercaseSig = `SHA256=${validSig.toUpperCase()}`;
+
+        const headers = {
+            'x-sepay-signature': uppercaseSig,
+            'x-sepay-timestamp': String(timestamp)
+        };
+
+        const result = verifyWebhookSignature(rawBody, headers, TEST_SECRET_KEY, clock.now());
+
+        assert.strictEqual(result.isValid, true, 'Chữ ký in hoa phải được xử lý case-insensitive an toàn');
+        assert.strictEqual(result.statusCode, 200);
+
+        console.log('  [PASS] TC-08h: Chữ ký in hoa / mixed-case xác thực thành công (200 OK).');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08h:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08i: Payload là JSON Array '[]' -> Bị từ chối 400 INVALID_PAYLOAD
+    try {
+        const timestamp = Math.floor(clock.now() / 1000);
+        const rawBodyArray = '[]';
+        const headers = {
+            'x-sepay-signature': generateValidSignature(rawBodyArray, timestamp),
+            'x-sepay-timestamp': String(timestamp)
+        };
+
+        const result = verifyWebhookSignature(rawBodyArray, headers, TEST_SECRET_KEY, clock.now());
+
+        assert.strictEqual(result.isValid, false, 'JSON Array phải bị từ chối');
+        assert.strictEqual(result.statusCode, 400);
+        assert.strictEqual(result.errorCode, 'INVALID_PAYLOAD');
+
+        console.log('  [PASS] TC-08i: JSON Array bị từ chối 400 INVALID_PAYLOAD.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-08i:', (err as Error).message);
+        failed++;
+    }
+
     return { passed, failed };
 }
 
@@ -459,6 +690,147 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
         passed++;
     } catch (err) {
         console.error('  [FAIL] TC-10:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-10b: Tài khoản nhận là chuỗi rỗng ("") -> BẮT BUỘC chuyển đối soát WRONG_RECIPIENT (Không bị bypass)
+    try {
+        const repo = new FakePaymentRepository();
+        repo.setSystemRecipientAccount('0123456789');
+
+        const order = createSampleOrder({ amountVnd: 50000 });
+        repo.seedOrder(order);
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_empty_recipient',
+            amountVnd: 50000,
+            recipientAccountNumber: '', // Rỗng
+            direction: 'IN',
+            content: order.paymentCode,
+            paymentCode: order.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload({ accountNumber: '' })
+        };
+
+        const result = await matchPaymentTransaction(event, repo, clock.now());
+
+        assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED', 'Tài khoản rỗng phải bị chuyển đối soát');
+        assert.strictEqual(result.reason, 'WRONG_RECIPIENT', 'Lý do phải là WRONG_RECIPIENT');
+        assert.strictEqual(result.writeSet?.updateOrder, undefined, 'Tuyệt đối không được cập nhật đơn PAID');
+        assert.strictEqual(result.writeSet?.createEntitlement, undefined, 'Tuyệt đối không được cấp quyền');
+
+        console.log('  [PASS] TC-10b: Tài khoản nhận rỗng ("") bị chặn triệt để, không cho phép bypass validation.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-10b:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-10c: Tài khoản nhận chỉ chứa khoảng trắng ("   ") -> Chuyển đối soát WRONG_RECIPIENT
+    try {
+        const repo = new FakePaymentRepository();
+        repo.setSystemRecipientAccount('0123456789');
+
+        const order = createSampleOrder({ amountVnd: 50000 });
+        repo.seedOrder(order);
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_whitespace_recipient',
+            amountVnd: 50000,
+            recipientAccountNumber: '   ', // Chỉ khoảng trắng
+            direction: 'IN',
+            content: order.paymentCode,
+            paymentCode: order.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload({ accountNumber: '   ' })
+        };
+
+        const result = await matchPaymentTransaction(event, repo, clock.now());
+
+        assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
+        assert.strictEqual(result.reason, 'WRONG_RECIPIENT');
+        assert.strictEqual(result.writeSet?.createEntitlement, undefined);
+
+        console.log('  [PASS] TC-10c: Tài khoản nhận chỉ chứa khoảng trắng bị chuyển sang đối soát WRONG_RECIPIENT.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-10c:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-10d: Hệ thống chưa cấu hình tài khoản nhận -> Ném ngoại lệ để controller trả HTTP 503 retry
+    try {
+        const repo = new FakePaymentRepository();
+        repo.setSystemRecipientAccount(''); // Chưa cấu hình
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_system_unconfig',
+            amountVnd: 50000,
+            recipientAccountNumber: '0123456789',
+            direction: 'IN',
+            content: 'UNIA1B2C3',
+            paymentCode: 'UNIA1B2C3',
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload()
+        };
+
+        let threwError = false;
+        try {
+            await matchPaymentTransaction(event, repo, clock.now());
+        } catch (err) {
+            threwError = true;
+            assert.ok((err as Error).message.includes('chưa cấu hình tài khoản nhận tiền'));
+        }
+
+        assert.strictEqual(threwError, true, 'Thiếu cấu hình tài khoản hệ thống phải ném lỗi 503');
+
+        console.log('  [PASS] TC-10d: Hệ thống chưa cấu hình tài khoản nhận ném exception an toàn để SePay retry.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-10d:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-10e: Tài khoản nhận có khoảng trắng đầu/cuối (' 0123456789 ') -> Sau khi trim khớp chính xác (MATCHED)
+    try {
+        const repo = new FakePaymentRepository();
+        repo.setSystemRecipientAccount(TEST_ACCOUNT_NUMBER);
+
+        const order = createSampleOrder({ status: 'PENDING' });
+        repo.seedOrder(order);
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_whitespace_padded',
+            amountVnd: 50000,
+            recipientAccountNumber: `  ${TEST_ACCOUNT_NUMBER}  `, // Có khoảng trắng đệm
+            direction: 'IN',
+            content: order.paymentCode,
+            paymentCode: order.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload()
+        };
+
+        const result = await matchPaymentTransaction(event, repo, clock.now());
+
+        assert.strictEqual(result.status, 'MATCHED', 'Tài khoản đệm khoảng trắng sau khi trim phải khớp đúng');
+        assert.strictEqual(result.writeSet?.createPayment.recipientId, TEST_ACCOUNT_NUMBER, 'recipientId phải được chuẩn hóa trim sạch');
+
+        console.log('  [PASS] TC-10e: Tài khoản nhận có khoảng trắng đệm được chuẩn hóa trim sạch và khớp MATCHED.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-10e:', (err as Error).message);
         failed++;
     }
 
@@ -762,6 +1134,39 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
         failed++;
     }
 
+    // TC-18b: bankOccurredAt không hợp lệ ('invalid-date') -> Chuyển đối soát ORDER_EXPIRED (an toàn)
+    try {
+        const repo = new FakePaymentRepository();
+        const order = createSampleOrder({ status: 'PENDING' });
+        repo.seedOrder(order);
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_invalid_bank_date',
+            amountVnd: 50000,
+            recipientAccountNumber: TEST_ACCOUNT_NUMBER,
+            direction: 'IN',
+            content: order.paymentCode,
+            paymentCode: order.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: 'invalid-date', // Chuỗi ngày không thể parse
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload()
+        };
+
+        const result = await matchPaymentTransaction(event, repo, clock.now());
+
+        assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
+        assert.strictEqual(result.reason, 'ORDER_EXPIRED');
+        assert.strictEqual(result.writeSet?.updateOrder, undefined);
+
+        console.log('  [PASS] TC-18b: Giao dịch có bankOccurredAt không hợp lệ bị chuyển sang đối soát bảo thủ.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-18b:', (err as Error).message);
+        failed++;
+    }
+
     return { passed, failed };
 }
 
@@ -918,6 +1323,40 @@ export async function runP06Tests(): Promise<{ passed: number; failed: number }>
         passed++;
     } catch (err) {
         console.error('  [FAIL] TC-21:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-22: Đơn hàng trong kho dữ liệu bị thiếu hoặc rỗng buyerId
+    // -> Không được cấp entitlement, chuyển đối soát an toàn INVALID_ORDER_DATA
+    try {
+        const repo = new FakePaymentRepository();
+        const orderWithoutBuyer = createSampleOrder({ buyerId: '' }); // Thiếu buyerId
+        repo.seedOrder(orderWithoutBuyer);
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_missing_buyer_1',
+            amountVnd: 50000,
+            recipientAccountNumber: TEST_ACCOUNT_NUMBER,
+            direction: 'IN',
+            content: orderWithoutBuyer.paymentCode,
+            paymentCode: orderWithoutBuyer.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload()
+        };
+
+        const result = await matchPaymentTransaction(event, repo, clock.now());
+
+        assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
+        assert.strictEqual(result.reason, 'INVALID_ORDER_DATA');
+        assert.strictEqual(result.writeSet?.createEntitlement, undefined, 'Tuyệt đối không cấp entitlement khi thiếu buyerId');
+
+        console.log('  [PASS] TC-22: Đơn hàng thiếu buyerId không được cấp entitlement, chuyển đối soát INVALID_ORDER_DATA.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-22:', (err as Error).message);
         failed++;
     }
 

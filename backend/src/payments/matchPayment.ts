@@ -20,15 +20,16 @@ export type PaymentMatchStatus = 'MATCHED' | 'DUPLICATE' | 'RECONCILIATION_REQUI
 export type ReconciliationReason =
     | 'DUPLICATE_TXN'           // Giao dịch bị gửi lặp lại
     | 'WRONG_DIRECTION'          // Giao dịch không phải chiều tiền vào ('IN')
-    | 'WRONG_RECIPIENT'          // Chuyển nhầm vào số tài khoản lạ, không phải tài khoản UniShare
+    | 'WRONG_RECIPIENT'          // Chuyển nhầm vào số tài khoản lạ, hoặc tài khoản nhận bị rỗng/thiếu
     | 'MISSING_PAYMENT_CODE'     // Nội dung chuyển khoản không có mã thanh toán chuẩn UNI...
     | 'MULTIPLE_PAYMENT_CODES'    // Nội dung chứa từ 2 mã đơn khác nhau (nghi vấn gian lận/gộp đơn)
     | 'ORDER_NOT_FOUND'          // Không tìm thấy đơn hàng tương ứng với mã thanh toán
     | 'ORDER_ALREADY_PAID'       // Đơn hàng này đã được thanh toán thành công trước đó (Giao dịch mới cho cùng đơn)
-    | 'ORDER_EXPIRED'            // Giao dịch ngân hàng diễn ra sau khi đơn đã hết hạn (quá 15 phút)
+    | 'ORDER_EXPIRED'            // Giao dịch ngân hàng diễn ra sau khi đơn đã hết hạn (quá 15 phút) hoặc thời gian không hợp lệ
     | 'AMOUNT_MISMATCH'          // Số tiền chuyển không khớp chính xác với giá đơn (thừa hoặc thiếu)
     | 'ORDER_UNDER_REVIEW'       // Đơn hàng đang trong trạng thái xem xét đối soát
-    | 'ALREADY_ENTITLED';        // Người mua đã sở hữu tài liệu này từ trước
+    | 'ALREADY_ENTITLED'         // Người mua đã sở hữu tài liệu này từ trước
+    | 'INVALID_ORDER_DATA';      // Đơn hàng thiếu thông tin người mua (buyerId) hoặc sai lệch dữ liệu
 
 /**
  * 3. Thông tin Snapshot của đơn hàng đọc từ hệ thống
@@ -36,7 +37,9 @@ export type ReconciliationReason =
 export interface OrderSnapshot {
     orderId: string;
     buyerId: string;
+    sellerId?: string;
     docId: string;
+    versionId?: string;
     amountVnd: number;
     status: 'PENDING' | 'PAID' | 'EXPIRED' | 'REVIEW_REQUIRED';
     paymentCode: string;
@@ -96,10 +99,11 @@ export interface ExpectedWriteSet {
         status: 'PAID' | 'REVIEW_REQUIRED';
         paidAt?: string;
     };
-    // Cấp quyền sở hữu tài liệu cho Buyer
+    // Cấp quyền sở hữu tài liệu cho Buyer (tuân thủ schema entitlements/{uid}/items/{docId})
     createEntitlement?: {
         uid: string;
         docId: string;
+        versionId?: string;
         orderId: string;
         grantedAt: string;
     };
@@ -208,7 +212,7 @@ export async function matchPaymentTransaction(
                     txnKey,
                     provider: 'SEPAY',
                     providerTxnId: event.providerTxnId,
-                    recipientId: event.recipientAccountNumber,
+                    recipientId: (event.recipientAccountNumber || '').trim(),
                     bankOccurredAt: event.bankOccurredAt,
                     amountVnd: event.amountVnd,
                     result: 'RECONCILIATION_REQUIRED',
@@ -223,12 +227,20 @@ export async function matchPaymentTransaction(
     // ------------------------------------------------------------------------
     // BƯỚC 3: Kiểm tra Số Tài Khoản Nhận Tiền (Recipient Check)
     // ------------------------------------------------------------------------
-    const expectedRecipientAccount = await repository.getSystemRecipientAccount();
-    if (
-        expectedRecipientAccount &&
-        event.recipientAccountNumber &&
-        event.recipientAccountNumber !== expectedRecipientAccount
-    ) {
+    const expectedRecipientAccount = (await repository.getSystemRecipientAccount() || '').trim();
+    if (!expectedRecipientAccount) {
+        // Cảnh báo: Hệ thống chưa cấu hình số tài khoản nhận tiền chính thức.
+        // Ném ngoại lệ lỗi cấu hình hệ thống để controller trả HTTP 503 kích hoạt retry từ SePay.
+        throw new Error('Hệ thống chưa cấu hình tài khoản nhận tiền chính thức (System recipient account is unconfigured).');
+    }
+
+    const actualRecipientAccount = (event.recipientAccountNumber || '').trim();
+
+    // BẮT BUỘC kiểm tra nghiêm ngặt:
+    // Nếu tài khoản nhận bị null, undefined, chuỗi rỗng, chỉ chứa khoảng trắng
+    // HOẶC khác với số tài khoản hệ thống đã cấu hình:
+    // Phải lập tức chuyển sang trạng thái đối soát WRONG_RECIPIENT, không được tiếp tục đối soát đơn.
+    if (!actualRecipientAccount || actualRecipientAccount !== expectedRecipientAccount) {
         const reconciliationRecord: ReconciliationRecord = {
             txnKey,
             provider: 'SEPAY',
@@ -237,7 +249,7 @@ export async function matchPaymentTransaction(
             firstSeenAt: nowIso,
             status: 'OPEN',
             details: {
-                recipientAccount: event.recipientAccountNumber,
+                recipientAccount: actualRecipientAccount,
                 content: event.content,
                 requestId
             }
@@ -247,13 +259,15 @@ export async function matchPaymentTransaction(
             status: 'RECONCILIATION_REQUIRED',
             httpStatus: 200,
             reason: 'WRONG_RECIPIENT',
-            message: 'Tiền được chuyển vào số tài khoản không thuộc quyền quản lý của UniShare.',
+            message: !actualRecipientAccount
+                ? 'Thông tin tài khoản nhận tiền trong webhook bị thiếu hoặc rỗng. Chuyển sang đối soát an toàn.'
+                : 'Tiền được chuyển vào số tài khoản không thuộc quyền quản lý của UniShare.',
             writeSet: {
                 createPayment: {
                     txnKey,
                     provider: 'SEPAY',
                     providerTxnId: event.providerTxnId,
-                    recipientId: event.recipientAccountNumber,
+                    recipientId: actualRecipientAccount,
                     bankOccurredAt: event.bankOccurredAt,
                     amountVnd: event.amountVnd,
                     result: 'RECONCILIATION_REQUIRED',
@@ -345,12 +359,17 @@ export async function matchPaymentTransaction(
     const bankTimeMs = new Date(event.bankOccurredAt).getTime();
     const expiryTimeMs = new Date(order.expiresAt).getTime();
 
-    if (order.status === 'EXPIRED' || (!isNaN(bankTimeMs) && !isNaN(expiryTimeMs) && bankTimeMs > expiryTimeMs)) {
+    if (
+        order.status === 'EXPIRED' ||
+        isNaN(bankTimeMs) ||
+        isNaN(expiryTimeMs) ||
+        bankTimeMs > expiryTimeMs
+    ) {
         return createReconciliationResult(
             txnKey,
             event,
             'ORDER_EXPIRED',
-            `Giao dịch diễn ra sau khi đơn hàng đã hết hạn (Quá hạn 15 phút). Chuyển sang đối soát.`,
+            `Giao dịch diễn ra sau khi đơn hàng đã hết hạn (Quá hạn 15 phút) hoặc thời gian ngân hàng không hợp lệ. Chuyển sang đối soát.`,
             nowIso,
             order.orderId,
             requestId
@@ -374,6 +393,8 @@ export async function matchPaymentTransaction(
             details: {
                 transferredAmount: event.amountVnd,
                 expectedAmount: order.amountVnd,
+                content: event.content,
+                recipientAccount: actualRecipientAccount,
                 requestId
             }
         };
@@ -392,7 +413,7 @@ export async function matchPaymentTransaction(
                     txnKey,
                     provider: 'SEPAY',
                     providerTxnId: event.providerTxnId,
-                    recipientId: event.recipientAccountNumber,
+                    recipientId: actualRecipientAccount,
                     orderId: order.orderId,
                     bankOccurredAt: event.bankOccurredAt,
                     amountVnd: event.amountVnd,
@@ -407,9 +428,23 @@ export async function matchPaymentTransaction(
     }
 
     // ------------------------------------------------------------------------
-    // BƯỚC 9: Kiểm tra Quyền Sở Hữu Đã Có (Already Entitled Check)
+    // BƯỚC 9: Kiểm tra Tính Hợp Lệ Của Dữ Liệu Đơn & Quyền Đã Có (Entitlement Check)
     // ------------------------------------------------------------------------
-    const isAlreadyEntitled = await repository.hasEntitlement(order.buyerId, order.docId);
+    // 9.1. Đảm bảo đơn hàng có buyerId hợp lệ trước khi cấp quyền
+    if (!order.buyerId || typeof order.buyerId !== 'string' || !order.buyerId.trim()) {
+        return createReconciliationResult(
+            txnKey,
+            event,
+            'INVALID_ORDER_DATA',
+            `Đơn hàng ${order.orderId} thiếu thông tin người mua (buyerId) hợp lệ. Chuyển sang đối soát an toàn.`,
+            nowIso,
+            order.orderId,
+            requestId
+        );
+    }
+
+    // 9.2. Kiểm tra xem người mua đã từng sở hữu tài liệu này chưa
+    const isAlreadyEntitled = await repository.hasEntitlement(order.buyerId.trim(), order.docId);
     if (isAlreadyEntitled) {
         return createReconciliationResult(
             txnKey,
@@ -432,8 +467,9 @@ export async function matchPaymentTransaction(
             paidAt: nowIso
         },
         createEntitlement: {
-            uid: order.buyerId,
+            uid: order.buyerId.trim(),
             docId: order.docId,
+            versionId: order.versionId,
             orderId: order.orderId,
             grantedAt: nowIso
         },
@@ -441,7 +477,7 @@ export async function matchPaymentTransaction(
             txnKey,
             provider: 'SEPAY',
             providerTxnId: event.providerTxnId,
-            recipientId: event.recipientAccountNumber,
+            recipientId: actualRecipientAccount,
             orderId: order.orderId,
             bankOccurredAt: event.bankOccurredAt,
             amountVnd: event.amountVnd,
@@ -483,7 +519,7 @@ function createReconciliationResult(
         details: {
             transferredAmount: event.amountVnd,
             content: event.content,
-            recipientAccount: event.recipientAccountNumber,
+            recipientAccount: (event.recipientAccountNumber || '').trim(),
             requestId
         }
     };
@@ -498,7 +534,7 @@ function createReconciliationResult(
                 txnKey,
                 provider: 'SEPAY',
                 providerTxnId: event.providerTxnId,
-                recipientId: event.recipientAccountNumber,
+                recipientId: (event.recipientAccountNumber || '').trim(),
                 orderId,
                 bankOccurredAt: event.bankOccurredAt,
                 amountVnd: event.amountVnd,
