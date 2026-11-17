@@ -61,14 +61,15 @@ export type WebhookVerificationErrorCode =
     | 'INVALID_TIMESTAMP'        // Timestamp không phải là số hợp lệ
     | 'TIMESTAMP_OUT_OF_WINDOW'  // Timestamp vượt quá cửa sổ trôi thời gian cho phép (5 phút)
     | 'INVALID_SIGNATURE'        // Chữ ký HMAC không khớp (sai secret hoặc dữ liệu bị sửa)
-    | 'INVALID_PAYLOAD';         // Body không phải là JSON hợp lệ hoặc thiếu trường bắt buộc
+    | 'INVALID_PAYLOAD'          // Body không phải là JSON hợp lệ hoặc thiếu trường bắt buộc
+    | 'SERVER_CONFIG_ERROR';     // Thiếu cấu hình secret key trên server runtime (503)
 
 /**
  * 5. Kết quả trả về sau khi xác minh chữ ký Webhook
  */
 export interface WebhookVerificationResult {
     isValid: boolean;
-    statusCode: 200 | 400 | 401; // 200: Hợp lệ, 400: Dữ liệu hỏng/quá hạn, 401: Chữ ký sai
+    statusCode: 200 | 400 | 401 | 503; // 200: Hợp lệ, 400: Dữ liệu hỏng/quá hạn, 401: Chữ ký sai, 503: Lỗi runtime
     event?: NormalizedWebhookEvent;
     errorCode?: WebhookVerificationErrorCode;
     message?: string;
@@ -86,7 +87,8 @@ export const SIGNATURE_TOLERANCE_SECONDS = 300;
 
 /**
  * Trích xuất mã thanh toán UniShare từ nội dung chuyển khoản.
- * Định dạng chuẩn UniShare: Tiền tố 'UNI' + 6 ký tự Hex in hoa (ví dụ: 'UNIA1B2C3').
+ * Định dạng chuẩn UniShare: Tiền tố 'UNI' + đúng 6 ký tự Hex in hoa (tổng cộng 9 ký tự, ví dụ: 'UNIA1B2C3').
+ * Sử dụng ranh giới ký tự (word boundary) để không nhận nhầm chuỗi dài hơn.
  * 
  * @param content Nội dung tin nhắn chuyển khoản từ ngân hàng
  * @returns { code: string | null, hasMultipleCodes: boolean }
@@ -99,15 +101,16 @@ export function extractPaymentCodeFromContent(content: string): {
         return { code: null, hasMultipleCodes: false };
     }
 
-    // Biểu thức chính quy: tìm các chuỗi bắt đầu bằng 'UNI' và 6 ký tự Hex không phân biệt hoa thường
-    const regex = /UNI[0-9A-Fa-f]{6}/g;
+    // Biểu thức chính quy với ranh giới từ: bắt buộc UNI theo sau bởi đúng 6 ký tự hex,
+    // không bị dính liền với ký tự chữ hoặc số khác ở hai đầu.
+    const regex = /(?<![0-9A-Za-z])UNI[0-9A-Fa-f]{6}(?![0-9A-Za-z])/g;
     const matches = content.match(regex);
 
     if (!matches || matches.length === 0) {
         return { code: null, hasMultipleCodes: false };
     }
 
-    // Chuẩn hóa tất cả các mã tìm được thành chữ in hoa
+    // Chuẩn hóa tất cả các mã tìm được thành chữ in hoa và lọc trùng lặp
     const normalizedCodes = Array.from(new Set(matches.map(m => m.toUpperCase())));
 
     if (normalizedCodes.length > 1) {
@@ -130,17 +133,19 @@ export function parseBankTimeToIso(dateStr: string): string {
         return new Date().toISOString();
     }
 
-    // Nếu chuỗi đã có định dạng ISO chuẩn (có ký tự 'T')
-    if (dateStr.includes('T')) {
-        const parsed = new Date(dateStr);
+    const trimmed = dateStr.trim();
+
+    // Nếu chuỗi đã có chỉ định múi giờ rõ ràng (có chữ 'Z' hoặc có dấu '+' hay '-' sau phần giờ)
+    if (trimmed.includes('Z') || /[0-9]{2}:[0-9]{2}:[0-9]{2}[+-]/.test(trimmed)) {
+        const parsed = new Date(trimmed);
         if (!isNaN(parsed.getTime())) return parsed.toISOString();
     }
 
-    // Trường hợp SePay trả về dạng 'YYYY-MM-DD HH:mm:ss' (Múi giờ Việt Nam UTC+7)
-    // Thay khoảng trắng thành 'T' và bổ sung offset múi giờ +07:00
-    const normalizedDateStr = dateStr.trim().replace(' ', 'T');
-    const withTimezone = normalizedDateStr.includes('+') ? normalizedDateStr : `${normalizedDateStr}+07:00`;
-    const parsedWithTz = new Date(withTimezone);
+    // Trường hợp SePay trả về dạng 'YYYY-MM-DD HH:mm:ss' hoặc 'YYYY-MM-DDTHH:mm:ss' (Múi giờ Việt Nam UTC+7)
+    // Thay khoảng trắng bằng 'T' và bổ sung offset múi giờ Việt Nam +07:00
+    const normalized = trimmed.replace(' ', 'T');
+    const withVnTimezone = `${normalized}+07:00`;
+    const parsedWithTz = new Date(withVnTimezone);
 
     if (!isNaN(parsedWithTz.getTime())) {
         return parsedWithTz.toISOString();
@@ -176,12 +181,13 @@ function getHeaderValue(
  * Xác thực tính hợp lệ của Webhook gửi từ SePay (Pure Logic).
  * 
  * Quy trình thực hiện:
- * 1. Kiểm tra sự tồn tại của header chữ ký (`x-sepay-signature`) và thời gian (`x-sepay-timestamp`).
- * 2. Kiểm tra tính hợp lệ của timestamp và độ lệch thời gian (Timestamp Tolerance Window 5 phút).
- * 3. Tạo chữ ký HMAC-SHA256 trên chuỗi `${timestamp}.${rawBody}` với secretKey.
- * 4. So sánh Constant-Time bằng `crypto.timingSafeEqual` để phòng chống Timing Attack.
- * 5. Parse an toàn nội dung JSON từ `rawBody`.
- * 6. Chuẩn hóa dữ liệu sang `NormalizedWebhookEvent` để bàn giao cho bộ đối soát `matchPayment`.
+ * 1. Kiểm tra secret key trên runtime server. Nếu thiếu -> trả về 503 để SePay retry.
+ * 2. Kiểm tra sự tồn tại của header chữ ký (`x-sepay-signature`) và thời gian (`x-sepay-timestamp`).
+ * 3. Kiểm tra tính hợp lệ của timestamp và độ lệch thời gian (Timestamp Tolerance Window 5 phút).
+ * 4. Tạo chữ ký HMAC-SHA256 trên chuỗi `${timestamp}.${rawBody}` với secretKey.
+ * 5. So sánh Constant-Time bằng `crypto.timingSafeEqual` để phòng chống Timing Attack.
+ * 6. Parse an toàn nội dung JSON từ `rawBody`.
+ * 7. Chuẩn hóa dữ liệu sang `NormalizedWebhookEvent` để bàn giao cho bộ đối soát `matchPayment`.
  * 
  * @param rawBody Chuỗi raw body nguyên bản nhận từ HTTP request (chưa qua parse JSON)
  * @param headers Các HTTP header nhận được từ SePay
@@ -195,7 +201,19 @@ export function verifyWebhookSignature(
     currentTimeMs: number = Date.now()
 ): WebhookVerificationResult {
     // ------------------------------------------------------------------------
-    // BƯỚC 1: Kiểm tra Header bắt buộc
+    // BƯỚC 1: Kiểm tra Secret Key trên Runtime
+    // ------------------------------------------------------------------------
+    if (!secretKey) {
+        return {
+            isValid: false,
+            statusCode: 503,
+            errorCode: 'SERVER_CONFIG_ERROR',
+            message: 'Secret key chưa được cấu hình trên server runtime. Vui lòng thử lại sau.'
+        };
+    }
+
+    // ------------------------------------------------------------------------
+    // BƯỚC 2: Kiểm tra Header bắt buộc
     // ------------------------------------------------------------------------
     const signature = getHeaderValue(headers, 'x-sepay-signature');
     const timestampStr = getHeaderValue(headers, 'x-sepay-timestamp');
@@ -210,7 +228,7 @@ export function verifyWebhookSignature(
     }
 
     // ------------------------------------------------------------------------
-    // BƯỚC 2: Kiểm tra Timestamp & Cửa sổ trôi thời gian (5 phút)
+    // BƯỚC 3: Kiểm tra Timestamp & Cửa sổ trôi thời gian (5 phút)
     // ------------------------------------------------------------------------
     const timestampNum = Number(timestampStr);
     if (isNaN(timestampNum) || timestampNum <= 0) {
@@ -223,7 +241,7 @@ export function verifyWebhookSignature(
     }
 
     // Timestamp của SePay thường tính bằng giây (Unix timestamp in seconds)
-    // Nếu timestamp là giây (độ dài 10 chữ số), đổi sang mili-giây
+    // Nếu timestamp là giây (độ dài <= 10 chữ số), đổi sang mili-giây
     const timestampMs = timestampStr.length <= 10 ? timestampNum * 1000 : timestampNum;
     const timeDiffMs = Math.abs(currentTimeMs - timestampMs);
     const maxToleranceMs = SIGNATURE_TOLERANCE_SECONDS * 1000;
@@ -238,17 +256,8 @@ export function verifyWebhookSignature(
     }
 
     // ------------------------------------------------------------------------
-    // BƯỚC 3: Tính toán chữ ký HMAC-SHA256 trên chuỗi `${timestamp}.${rawBody}`
+    // BƯỚC 4: Tính toán chữ ký HMAC-SHA256 trên chuỗi `${timestamp}.${rawBody}`
     // ------------------------------------------------------------------------
-    if (!secretKey) {
-        return {
-            isValid: false,
-            statusCode: 401,
-            errorCode: 'INVALID_SIGNATURE',
-            message: 'Secret key chưa được cấu hình trên runtime.'
-        };
-    }
-
     const payloadToSign = `${timestampStr}.${rawBody}`;
     const expectedSignature = crypto
         .createHmac('sha256', secretKey)
@@ -256,7 +265,7 @@ export function verifyWebhookSignature(
         .digest('hex');
 
     // ------------------------------------------------------------------------
-    // BƯỚC 4: So sánh Constant-Time (Phòng chống Timing Attack)
+    // BƯỚC 5: So sánh Constant-Time (Phòng chống Timing Attack)
     // ------------------------------------------------------------------------
     const expectedBuffer = Buffer.from(expectedSignature, 'utf-8');
     const actualBuffer = Buffer.from(signature, 'utf-8');
@@ -282,7 +291,7 @@ export function verifyWebhookSignature(
     }
 
     // ------------------------------------------------------------------------
-    // BƯỚC 5: Parse an toàn JSON từ rawBody
+    // BƯỚC 6: Parse an toàn JSON từ rawBody
     // ------------------------------------------------------------------------
     let parsedPayload: SePayRawPayload;
     try {
@@ -307,7 +316,7 @@ export function verifyWebhookSignature(
     }
 
     // ------------------------------------------------------------------------
-    // BƯỚC 6: Chuẩn hóa dữ liệu sang NormalizedWebhookEvent
+    // BƯỚC 7: Chuẩn hóa dữ liệu sang NormalizedWebhookEvent
     // ------------------------------------------------------------------------
     const { code, hasMultipleCodes } = extractPaymentCodeFromContent(parsedPayload.content);
 
@@ -332,4 +341,3 @@ export function verifyWebhookSignature(
         message: 'Xác thực chữ ký webhook SePay thành công.'
     };
 }
-

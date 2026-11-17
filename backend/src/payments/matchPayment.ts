@@ -24,7 +24,7 @@ export type ReconciliationReason =
     | 'MISSING_PAYMENT_CODE'     // Nội dung chuyển khoản không có mã thanh toán chuẩn UNI...
     | 'MULTIPLE_PAYMENT_CODES'    // Nội dung chứa từ 2 mã đơn khác nhau (nghi vấn gian lận/gộp đơn)
     | 'ORDER_NOT_FOUND'          // Không tìm thấy đơn hàng tương ứng với mã thanh toán
-    | 'ORDER_ALREADY_PAID'       // Đơn hàng này đã được thanh toán thành công trước đó
+    | 'ORDER_ALREADY_PAID'       // Đơn hàng này đã được thanh toán thành công trước đó (Giao dịch mới cho cùng đơn)
     | 'ORDER_EXPIRED'            // Giao dịch ngân hàng diễn ra sau khi đơn đã hết hạn (quá 15 phút)
     | 'AMOUNT_MISMATCH'          // Số tiền chuyển không khớp chính xác với giá đơn (thừa hoặc thiếu)
     | 'ORDER_UNDER_REVIEW'       // Đơn hàng đang trong trạng thái xem xét đối soát
@@ -46,7 +46,8 @@ export interface OrderSnapshot {
 
 /**
  * 4. Bản ghi giao dịch lưu trữ tại collection `payments/{txnKey}`
- * Tuân thủ schema trong DATABASE_SCHEMA.md
+ * Tuân thủ schema trong DATABASE_SCHEMA.md:
+ * payments/{txnKey}: provider, providerTxnId, recipientId, orderId?, bankOccurredAt, amountVnd, result, normalizedCode?, requestId, firstSeenAt
  */
 export interface PaymentRecord {
     txnKey: string;                    // Khóa duy nhất theo namespace (ví dụ: 'sepay_123456')
@@ -58,11 +59,14 @@ export interface PaymentRecord {
     amountVnd: number;
     result: PaymentMatchStatus;
     normalizedCode?: string;
+    requestId?: string;                // Request ID truy vết theo chuẩn hệ thống
     firstSeenAt: string;
 }
 
 /**
  * 5. Bản ghi đối soát lưu trữ tại collection `reconciliation/{txnKey}`
+ * Tuân thủ schema trong DATABASE_SCHEMA.md:
+ * reconciliation/{txnKey}: reason, orderId?, firstSeenAt, status, operatorNote?
  */
 export interface ReconciliationRecord {
     txnKey: string;
@@ -77,6 +81,7 @@ export interface ReconciliationRecord {
         expectedAmount?: number;
         content?: string;
         recipientAccount?: string;
+        requestId?: string;
     };
 }
 
@@ -155,11 +160,13 @@ export interface IPaymentRepository {
  * @param event Sự kiện webhook đã được chuẩn hóa từ verifyWebhook
  * @param repository Cổng kết nối dữ liệu (Repository Port)
  * @param currentTimeMs Thời điểm xử lý hiện tại (mili-giây), mặc định Date.now()
+ * @param requestId Mã định danh request (tùy chọn) để phục vụ audit log theo DATABASE_SCHEMA.md
  */
 export async function matchPaymentTransaction(
     event: NormalizedWebhookEvent,
     repository: IPaymentRepository,
-    currentTimeMs: number = Date.now()
+    currentTimeMs: number = Date.now(),
+    requestId?: string
 ): Promise<PaymentMatchResult> {
     const txnKey = `sepay_${event.providerTxnId}`;
     const nowIso = new Date(currentTimeMs).toISOString();
@@ -188,7 +195,7 @@ export async function matchPaymentTransaction(
             reason: 'WRONG_DIRECTION',
             firstSeenAt: nowIso,
             status: 'OPEN',
-            details: { content: event.content }
+            details: { content: event.content, requestId }
         };
 
         return {
@@ -205,6 +212,7 @@ export async function matchPaymentTransaction(
                     bankOccurredAt: event.bankOccurredAt,
                     amountVnd: event.amountVnd,
                     result: 'RECONCILIATION_REQUIRED',
+                    requestId,
                     firstSeenAt: nowIso
                 },
                 createReconciliation: reconciliationRecord
@@ -230,7 +238,8 @@ export async function matchPaymentTransaction(
             status: 'OPEN',
             details: {
                 recipientAccount: event.recipientAccountNumber,
-                content: event.content
+                content: event.content,
+                requestId
             }
         };
 
@@ -248,6 +257,7 @@ export async function matchPaymentTransaction(
                     bankOccurredAt: event.bankOccurredAt,
                     amountVnd: event.amountVnd,
                     result: 'RECONCILIATION_REQUIRED',
+                    requestId,
                     firstSeenAt: nowIso
                 },
                 createReconciliation: reconciliationRecord
@@ -265,7 +275,9 @@ export async function matchPaymentTransaction(
             event,
             'MULTIPLE_PAYMENT_CODES',
             'Nội dung giao dịch chứa từ 2 mã thanh toán trở lên. Chuyển đối soát thủ công.',
-            nowIso
+            nowIso,
+            undefined,
+            requestId
         );
     }
 
@@ -276,7 +288,9 @@ export async function matchPaymentTransaction(
             event,
             'MISSING_PAYMENT_CODE',
             'Nội dung giao dịch không chứa mã thanh toán UniShare hợp lệ.',
-            nowIso
+            nowIso,
+            undefined,
+            requestId
         );
     }
 
@@ -290,7 +304,9 @@ export async function matchPaymentTransaction(
             event,
             'ORDER_NOT_FOUND',
             `Không tìm thấy đơn hàng nào có mã thanh toán: ${event.paymentCode}`,
-            nowIso
+            nowIso,
+            undefined,
+            requestId
         );
     }
 
@@ -305,7 +321,8 @@ export async function matchPaymentTransaction(
             'ORDER_ALREADY_PAID',
             `Đơn hàng ${order.orderId} đã được thanh toán thành công từ trước. Giao dịch mới cần hoàn tiền/đối soát.`,
             nowIso,
-            order.orderId
+            order.orderId,
+            requestId
         );
     }
 
@@ -317,7 +334,8 @@ export async function matchPaymentTransaction(
             'ORDER_UNDER_REVIEW',
             `Đơn hàng ${order.orderId} đang trong quá trình đối soát. Tạm hoãn xử lý giao dịch mới.`,
             nowIso,
-            order.orderId
+            order.orderId,
+            requestId
         );
     }
 
@@ -334,7 +352,8 @@ export async function matchPaymentTransaction(
             'ORDER_EXPIRED',
             `Giao dịch diễn ra sau khi đơn hàng đã hết hạn (Quá hạn 15 phút). Chuyển sang đối soát.`,
             nowIso,
-            order.orderId
+            order.orderId,
+            requestId
         );
     }
 
@@ -343,7 +362,7 @@ export async function matchPaymentTransaction(
     // ------------------------------------------------------------------------
     if (event.amountVnd !== order.amountVnd) {
         // Chuyển thiếu hoặc chuyển thừa tiền -> Không mở khóa tài liệu
-        // Đồng thời chuyển đơn sang REVIEW_REQUIRED để chặn trả lặp
+        // Đồng thời chuyển đơn sang REVIEW_REQUIRED để chặn trả lặp theo PAYMENT_POC.md §5
         const reconciliationRecord: ReconciliationRecord = {
             txnKey,
             provider: 'SEPAY',
@@ -354,7 +373,8 @@ export async function matchPaymentTransaction(
             status: 'OPEN',
             details: {
                 transferredAmount: event.amountVnd,
-                expectedAmount: order.amountVnd
+                expectedAmount: order.amountVnd,
+                requestId
             }
         };
 
@@ -378,6 +398,7 @@ export async function matchPaymentTransaction(
                     amountVnd: event.amountVnd,
                     result: 'RECONCILIATION_REQUIRED',
                     normalizedCode: event.paymentCode,
+                    requestId,
                     firstSeenAt: nowIso
                 },
                 createReconciliation: reconciliationRecord
@@ -396,7 +417,8 @@ export async function matchPaymentTransaction(
             'ALREADY_ENTITLED',
             `Người mua ${order.buyerId} đã sở hữu tài liệu ${order.docId} này rồi. Cần đối soát hoàn tiền.`,
             nowIso,
-            order.orderId
+            order.orderId,
+            requestId
         );
     }
 
@@ -425,6 +447,7 @@ export async function matchPaymentTransaction(
             amountVnd: event.amountVnd,
             result: 'MATCHED',
             normalizedCode: event.paymentCode,
+            requestId,
             firstSeenAt: nowIso
         }
     };
@@ -446,7 +469,8 @@ function createReconciliationResult(
     reason: ReconciliationReason,
     message: string,
     nowIso: string,
-    orderId?: string
+    orderId?: string,
+    requestId?: string
 ): PaymentMatchResult {
     const reconciliationRecord: ReconciliationRecord = {
         txnKey,
@@ -459,7 +483,8 @@ function createReconciliationResult(
         details: {
             transferredAmount: event.amountVnd,
             content: event.content,
-            recipientAccount: event.recipientAccountNumber
+            recipientAccount: event.recipientAccountNumber,
+            requestId
         }
     };
 
@@ -479,10 +504,10 @@ function createReconciliationResult(
                 amountVnd: event.amountVnd,
                 result: 'RECONCILIATION_REQUIRED',
                 normalizedCode: event.paymentCode || undefined,
+                requestId,
                 firstSeenAt: nowIso
             },
             createReconciliation: reconciliationRecord
         }
     };
 }
-

@@ -61,6 +61,7 @@ export class FakePaymentRepository implements IPaymentRepository {
     private ordersByCode: Map<string, OrderSnapshot> = new Map();
     private entitlements: Set<string> = new Set();
     private systemRecipientAccount: string = '0123456789';
+    private shouldSimulateFailure: boolean = false;
 
     // --- Các hàm tiện ích nạp dữ liệu mẫu (Seed Helpers) ---
 
@@ -80,13 +81,24 @@ export class FakePaymentRepository implements IPaymentRepository {
         this.systemRecipientAccount = accountNumber;
     }
 
+    /** Bật chế độ mô phỏng lỗi kết nối / timeout cơ sở dữ liệu phục vụ P06 */
+    setSimulateFailure(fail: boolean): void {
+        this.shouldSimulateFailure = fail;
+    }
+
     // --- Triển khai IPaymentRepository ---
 
     async getPaymentByTxnKey(txnKey: string): Promise<PaymentRecord | null> {
+        if (this.shouldSimulateFailure) {
+            throw new Error('Database connection timeout (Mô phỏng lỗi mạng 503)');
+        }
         return this.payments.get(txnKey) || null;
     }
 
     async getOrderByPaymentCode(paymentCode: string): Promise<OrderSnapshot | null> {
+        if (this.shouldSimulateFailure) {
+            throw new Error('Database query failure (Mô phỏng lỗi Firestore)');
+        }
         return this.ordersByCode.get(paymentCode) || null;
     }
 
@@ -289,7 +301,7 @@ export async function runP02Tests(): Promise<{ passed: number; failed: number }>
         failed++;
     }
 
-    // TC-06: Raw body bị format lại (thêm dấu cách) dù JSON cùng nội dung -> Chữ ký fail
+    // TC-06: Raw body bị format lại (thêm khoảng trắng / reserialize) dù JSON cùng nội dung -> Chữ ký fail
     try {
         const originalBody = '{"id":123,"transferAmount":50000}';
         const timestamp = Math.floor(clock.now() / 1000);
@@ -315,12 +327,43 @@ export async function runP02Tests(): Promise<{ passed: number; failed: number }>
         failed++;
     }
 
-    // TC-07: Helper extractPaymentCodeFromContent
+    // TC-07: Thiếu cấu hình Secret Key trên runtime -> Trả về 503 SERVER_CONFIG_ERROR
+    try {
+        const rawBody = JSON.stringify(createSampleSePayPayload());
+        const timestamp = Math.floor(clock.now() / 1000);
+        const headers = {
+            'x-sepay-signature': 'some_sig',
+            'x-sepay-timestamp': String(timestamp)
+        };
+
+        // Truyền secret rỗng
+        const result = verifyWebhookSignature(rawBody, headers, '', clock.now());
+
+        assert.strictEqual(result.isValid, false);
+        assert.strictEqual(result.statusCode, 503, 'Thiếu secret key phải trả về mã 503 để SePay retry');
+        assert.strictEqual(result.errorCode, 'SERVER_CONFIG_ERROR');
+
+        console.log('  [PASS] TC-07: Thiếu secret key trên server trả về 503 SERVER_CONFIG_ERROR.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-07:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-08: Helper extractPaymentCodeFromContent kiểm tra ranh giới từ (Word Boundary)
     try {
         // Một mã hợp lệ
         const r1 = extractPaymentCodeFromContent('CK tien mua sach UNIA1B2C3 nhe');
         assert.strictEqual(r1.code, 'UNIA1B2C3');
         assert.strictEqual(r1.hasMultipleCodes, false);
+
+        // Chuỗi dài hơn 9 ký tự (ví dụ UNIA1B2C3456) KHÔNG được nhận nhầm là UNIA1B2C3
+        const rLong = extractPaymentCodeFromContent('Ma giao dich UNIA1B2C3456 la sai');
+        assert.strictEqual(rLong.code, null, 'Chuỗi vượt quá 6 ký tự hex không được nhận nhầm');
+
+        // Bị dính liền ký tự phía trước (ví dụ XUNIA1B2C3) KHÔNG được nhận nhầm
+        const rPrefix = extractPaymentCodeFromContent('Ma XUNIA1B2C3 bi dinh chu');
+        assert.strictEqual(rPrefix.code, null, 'Chuỗi dính liền phía trước không được nhận nhầm');
 
         // Chữ thường tự đổi sang in hoa
         const r2 = extractPaymentCodeFromContent('unia1b2c3');
@@ -336,10 +379,10 @@ export async function runP02Tests(): Promise<{ passed: number; failed: number }>
         assert.strictEqual(r4.code, null);
         assert.strictEqual(r4.hasMultipleCodes, true, 'Phát hiện có 2 mã khác nhau');
 
-        console.log('  [PASS] TC-07: Helper trích xuất mã thanh toán và phát hiện đa mã chính xác.');
+        console.log('  [PASS] TC-08: Helper trích xuất mã và kiểm tra ranh giới từ (Word Boundary) chuẩn xác.');
         passed++;
     } catch (err) {
-        console.error('  [FAIL] TC-07:', (err as Error).message);
+        console.error('  [FAIL] TC-08:', (err as Error).message);
         failed++;
     }
 
@@ -357,7 +400,7 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
 
     const clock = new FakeClock();
 
-    // TC-08: Giao dịch chiều rút tiền (OUT) -> Chuyển đối soát WRONG_DIRECTION
+    // TC-09: Giao dịch chiều rút tiền (OUT) -> Chuyển đối soát WRONG_DIRECTION
     try {
         const repo = new FakePaymentRepository();
         const event: NormalizedWebhookEvent = {
@@ -374,20 +417,21 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
             rawPayload: createSampleSePayPayload({ transferType: 'out' })
         };
 
-        const result = await matchPaymentTransaction(event, repo, clock.now());
+        const result = await matchPaymentTransaction(event, repo, clock.now(), 'req-001');
 
         assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
         assert.strictEqual(result.reason, 'WRONG_DIRECTION');
         assert.strictEqual(result.writeSet?.createReconciliation?.reason, 'WRONG_DIRECTION');
+        assert.strictEqual(result.writeSet?.createPayment.requestId, 'req-001');
 
-        console.log('  [PASS] TC-08: Giao dịch chiều rút tiền (OUT) chuyển đối soát WRONG_DIRECTION.');
+        console.log('  [PASS] TC-09: Giao dịch chiều rút tiền (OUT) chuyển đối soát WRONG_DIRECTION.');
         passed++;
     } catch (err) {
-        console.error('  [FAIL] TC-08:', (err as Error).message);
+        console.error('  [FAIL] TC-09:', (err as Error).message);
         failed++;
     }
 
-    // TC-09: Chuyển nhầm vào số tài khoản lạ -> Chuyển đối soát WRONG_RECIPIENT
+    // TC-10: Chuyển nhầm vào số tài khoản lạ -> Chuyển đối soát WRONG_RECIPIENT
     try {
         const repo = new FakePaymentRepository();
         repo.setSystemRecipientAccount('0123456789');
@@ -411,14 +455,14 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
         assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
         assert.strictEqual(result.reason, 'WRONG_RECIPIENT');
 
-        console.log('  [PASS] TC-09: Chuyển khoản vào tài khoản lạ chuyển đối soát WRONG_RECIPIENT.');
+        console.log('  [PASS] TC-10: Chuyển khoản vào tài khoản lạ chuyển đối soát WRONG_RECIPIENT.');
         passed++;
     } catch (err) {
-        console.error('  [FAIL] TC-09:', (err as Error).message);
+        console.error('  [FAIL] TC-10:', (err as Error).message);
         failed++;
     }
 
-    // TC-10: Nội dung chứa từ 2 mã đơn khác nhau -> Chuyển đối soát MULTIPLE_PAYMENT_CODES
+    // TC-11: Nội dung chứa từ 2 mã đơn khác nhau -> Chuyển đối soát MULTIPLE_PAYMENT_CODES
     try {
         const repo = new FakePaymentRepository();
         const event: NormalizedWebhookEvent = {
@@ -440,14 +484,14 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
         assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
         assert.strictEqual(result.reason, 'MULTIPLE_PAYMENT_CODES');
 
-        console.log('  [PASS] TC-10: Nội dung chứa 2 mã thanh toán chuyển đối soát MULTIPLE_PAYMENT_CODES.');
+        console.log('  [PASS] TC-11: Nội dung chứa 2 mã thanh toán chuyển đối soát MULTIPLE_PAYMENT_CODES.');
         passed++;
     } catch (err) {
-        console.error('  [FAIL] TC-10:', (err as Error).message);
+        console.error('  [FAIL] TC-11:', (err as Error).message);
         failed++;
     }
 
-    // TC-11: Mã thanh toán không tồn tại trong hệ thống -> Chuyển đối soát ORDER_NOT_FOUND
+    // TC-12: Mã thanh toán không tồn tại trong hệ thống -> Chuyển đối soát ORDER_NOT_FOUND
     try {
         const repo = new FakePaymentRepository();
         const event: NormalizedWebhookEvent = {
@@ -469,14 +513,14 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
         assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
         assert.strictEqual(result.reason, 'ORDER_NOT_FOUND');
 
-        console.log('  [PASS] TC-11: Mã đơn không tồn tại chuyển đối soát ORDER_NOT_FOUND.');
+        console.log('  [PASS] TC-12: Mã đơn không tồn tại chuyển đối soát ORDER_NOT_FOUND.');
         passed++;
     } catch (err) {
-        console.error('  [FAIL] TC-11:', (err as Error).message);
+        console.error('  [FAIL] TC-12:', (err as Error).message);
         failed++;
     }
 
-    // TC-12: Chuyển thiếu tiền (Giá 50.000đ nhưng chỉ chuyển 40.000đ)
+    // TC-13: Chuyển thiếu tiền (Giá 50.000đ nhưng chỉ chuyển 40.000đ)
     // -> Đối soát AMOUNT_MISMATCH và đổi đơn sang REVIEW_REQUIRED
     try {
         const repo = new FakePaymentRepository();
@@ -503,14 +547,14 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
         assert.strictEqual(result.reason, 'AMOUNT_MISMATCH');
         assert.strictEqual(result.writeSet?.updateOrder?.status, 'REVIEW_REQUIRED', 'Đơn phải đổi sang REVIEW_REQUIRED');
 
-        console.log('  [PASS] TC-12: Chuyển thiếu tiền không cấp quyền, chuyển đơn sang REVIEW_REQUIRED.');
+        console.log('  [PASS] TC-13: Chuyển thiếu tiền không cấp quyền, chuyển đơn sang REVIEW_REQUIRED.');
         passed++;
     } catch (err) {
-        console.error('  [FAIL] TC-12:', (err as Error).message);
+        console.error('  [FAIL] TC-13:', (err as Error).message);
         failed++;
     }
 
-    // TC-13: Chuyển thừa tiền (Giá 50.000đ nhưng chuyển 60.000đ) -> AMOUNT_MISMATCH
+    // TC-14: Chuyển thừa tiền (Giá 50.000đ nhưng chuyển 60.000đ) -> AMOUNT_MISMATCH
     try {
         const repo = new FakePaymentRepository();
         const order = createSampleOrder({ amountVnd: 50000 });
@@ -535,39 +579,7 @@ export async function runP03Tests(): Promise<{ passed: number; failed: number }>
         assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
         assert.strictEqual(result.reason, 'AMOUNT_MISMATCH');
 
-        console.log('  [PASS] TC-13: Chuyển thừa tiền chuyển sang đối soát AMOUNT_MISMATCH.');
-        passed++;
-    } catch (err) {
-        console.error('  [FAIL] TC-13:', (err as Error).message);
-        failed++;
-    }
-
-    // TC-14: Đơn hàng đã ở trạng thái PAID từ trước -> Khách chuyển lần 2 báo ORDER_ALREADY_PAID
-    try {
-        const repo = new FakePaymentRepository();
-        const paidOrder = createSampleOrder({ status: 'PAID' });
-        repo.seedOrder(paidOrder);
-
-        const event: NormalizedWebhookEvent = {
-            provider: 'SEPAY',
-            providerTxnId: 'txn_second_pay_1',
-            amountVnd: 50000,
-            recipientAccountNumber: TEST_ACCOUNT_NUMBER,
-            direction: 'IN',
-            content: paidOrder.paymentCode,
-            paymentCode: paidOrder.paymentCode,
-            hasMultipleCodes: false,
-            bankOccurredAt: new Date(clock.now()).toISOString(),
-            signatureVerifiedAt: new Date(clock.now()).toISOString(),
-            rawPayload: createSampleSePayPayload()
-        };
-
-        const result = await matchPaymentTransaction(event, repo, clock.now());
-
-        assert.strictEqual(result.status, 'RECONCILIATION_REQUIRED');
-        assert.strictEqual(result.reason, 'ORDER_ALREADY_PAID');
-
-        console.log('  [PASS] TC-14: Giao dịch chuyển vào đơn đã PAID chuyển đối soát hoàn tiền.');
+        console.log('  [PASS] TC-14: Chuyển thừa tiền chuyển sang đối soát AMOUNT_MISMATCH.');
         passed++;
     } catch (err) {
         console.error('  [FAIL] TC-14:', (err as Error).message);
@@ -609,7 +621,7 @@ export async function runP04Tests(): Promise<{ passed: number; failed: number }>
         };
 
         // Lần 1: Khớp thành công
-        const res1 = await matchPaymentTransaction(event, repo, clock.now());
+        const res1 = await matchPaymentTransaction(event, repo, clock.now(), 'req-first');
         assert.strictEqual(res1.status, 'MATCHED');
         assert.strictEqual(res1.writeSet?.updateOrder?.status, 'PAID');
         assert.strictEqual(res1.writeSet?.createEntitlement?.uid, order.buyerId);
@@ -620,7 +632,7 @@ export async function runP04Tests(): Promise<{ passed: number; failed: number }>
         }
 
         // Lần 2: Webhook SePay retry hoặc gửi đúp chính txnKey này
-        const res2 = await matchPaymentTransaction(event, repo, clock.now());
+        const res2 = await matchPaymentTransaction(event, repo, clock.now(), 'req-retry');
         assert.strictEqual(res2.status, 'DUPLICATE', 'Lần 2 phải nhận diện là DUPLICATE');
         assert.strictEqual(res2.httpStatus, 200, 'Vẫn phải trả 200 OK để SePay ngừng retry');
         assert.strictEqual(res2.writeSet, undefined, 'Không được phát sinh Write Set cấp quyền lần 2');
@@ -754,6 +766,165 @@ export async function runP05Tests(): Promise<{ passed: number; failed: number }>
 }
 
 // ============================================================================
+// BỘ KIỂM THỬ P06: LỖI HỆ THỐNG / 503 RETRY & 2 GIAO DỊCH CHO 1 ĐƠN (P06 TEST SUITE)
+// Theo mục 7 Issue B03 và TEST_PLAN.md §P06
+// ============================================================================
+
+export async function runP06Tests(): Promise<{ passed: number; failed: number }> {
+    console.log('\n--- [TEST SUITE P06] MÔ PHỎNG 503 RETRY & GIAO DỊCH THỨ HAI CHO ĐƠN PAID ---');
+    let passed = 0;
+    let failed = 0;
+
+    const clock = new FakeClock();
+
+    // TC-19: Hai mã giao dịch SePay khác nhau cho cùng 1 đơn đã PAID
+    // (Khách chuyển khoản 2 lần tiền thật khác nhau từ ngân hàng)
+    // -> Giao dịch 1: MATCHED. Giao dịch 2: RECONCILIATION_REQUIRED (ORDER_ALREADY_PAID)
+    try {
+        const repo = new FakePaymentRepository();
+        const order = createSampleOrder({ status: 'PENDING' });
+        repo.seedOrder(order);
+
+        // Giao dịch thứ nhất (ID: txn_first_001)
+        const event1: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_first_001',
+            amountVnd: 50000,
+            recipientAccountNumber: TEST_ACCOUNT_NUMBER,
+            direction: 'IN',
+            content: order.paymentCode,
+            paymentCode: order.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload({ id: 'txn_first_001' })
+        };
+
+        const res1 = await matchPaymentTransaction(event1, repo, clock.now(), 'req-001');
+        assert.strictEqual(res1.status, 'MATCHED', 'Giao dịch 1 phải khớp thành công');
+
+        // Giả lập hệ thống cập nhật đơn sang PAID và lưu payment 1
+        order.status = 'PAID';
+        if (res1.writeSet?.createPayment) {
+            repo.seedPayment(res1.writeSet.createPayment);
+        }
+
+        // Giao dịch thứ hai (ID: txn_second_002 hoàn toàn mới)
+        const event2: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_second_002',
+            amountVnd: 50000,
+            recipientAccountNumber: TEST_ACCOUNT_NUMBER,
+            direction: 'IN',
+            content: order.paymentCode,
+            paymentCode: order.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now() + 60000).toISOString(),
+            signatureVerifiedAt: new Date(clock.now() + 60000).toISOString(),
+            rawPayload: createSampleSePayPayload({ id: 'txn_second_002' })
+        };
+
+        const res2 = await matchPaymentTransaction(event2, repo, clock.now() + 60000, 'req-002');
+
+        assert.strictEqual(res2.status, 'RECONCILIATION_REQUIRED', 'Giao dịch 2 phải chuyển đối soát');
+        assert.strictEqual(res2.reason, 'ORDER_ALREADY_PAID', 'Lý do phải là ORDER_ALREADY_PAID');
+        assert.strictEqual(res2.writeSet?.updateOrder, undefined, 'Không được cập nhật đè đơn');
+
+        console.log('  [PASS] TC-19: Giao dịch ID mới cho đơn đã PAID chuyển đối soát ORDER_ALREADY_PAID để hoàn tiền.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-19:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-20: Mô phỏng lỗi Repository (Database Timeout / Network Error)
+    // -> Ném exception để tầng Cloud Functions A07 bắt và trả HTTP 503 cho SePay retry
+    try {
+        const repo = new FakePaymentRepository();
+        repo.setSimulateFailure(true); // Kích hoạt mô phỏng lỗi DB
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_fail_simulate',
+            amountVnd: 50000,
+            recipientAccountNumber: TEST_ACCOUNT_NUMBER,
+            direction: 'IN',
+            content: 'UNIA1B2C3',
+            paymentCode: 'UNIA1B2C3',
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload()
+        };
+
+        let threwError = false;
+        try {
+            await matchPaymentTransaction(event, repo, clock.now());
+        } catch (dbErr) {
+            threwError = true;
+            assert.ok((dbErr as Error).message.includes('Mô phỏng lỗi mạng 503'));
+        }
+
+        assert.strictEqual(threwError, true, 'Lỗi cơ sở dữ liệu phải ném ra ngoài để A07 xử lý trả HTTP 503');
+
+        console.log('  [PASS] TC-20: Lỗi truy vấn Repository ném exception chuẩn xác để controller kích hoạt 503 retry.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-20:', (err as Error).message);
+        failed++;
+    }
+
+    // TC-21: Mô phỏng SePay retry thành công sau khi mạng / cơ sở dữ liệu phục hồi
+    try {
+        const repo = new FakePaymentRepository();
+        const order = createSampleOrder({ status: 'PENDING' });
+        repo.seedOrder(order);
+
+        // Ban đầu DB lỗi
+        repo.setSimulateFailure(true);
+
+        const event: NormalizedWebhookEvent = {
+            provider: 'SEPAY',
+            providerTxnId: 'txn_retry_success_1',
+            amountVnd: 50000,
+            recipientAccountNumber: TEST_ACCOUNT_NUMBER,
+            direction: 'IN',
+            content: order.paymentCode,
+            paymentCode: order.paymentCode,
+            hasMultipleCodes: false,
+            bankOccurredAt: new Date(clock.now()).toISOString(),
+            signatureVerifiedAt: new Date(clock.now()).toISOString(),
+            rawPayload: createSampleSePayPayload()
+        };
+
+        // Lần 1: Thất bại do DB lỗi
+        let firstTryFailed = false;
+        try {
+            await matchPaymentTransaction(event, repo, clock.now());
+        } catch {
+            firstTryFailed = true;
+        }
+        assert.strictEqual(firstTryFailed, true);
+
+        // Sau đó cơ sở dữ liệu phục hồi
+        repo.setSimulateFailure(false);
+
+        // Lần 2: SePay retry gửi lại -> Khớp thành công
+        const retryResult = await matchPaymentTransaction(event, repo, clock.now());
+        assert.strictEqual(retryResult.status, 'MATCHED', 'Sau khi phục hồi, retry phải khớp thành công');
+        assert.strictEqual(retryResult.writeSet?.updateOrder?.status, 'PAID');
+
+        console.log('  [PASS] TC-21: Sau khi hệ thống hồi phục, SePay retry được xử lý khớp đơn thành công.');
+        passed++;
+    } catch (err) {
+        console.error('  [FAIL] TC-21:', (err as Error).message);
+        failed++;
+    }
+
+    return { passed, failed };
+}
+
+// ============================================================================
 // HÀM CHẠY TOÀN BỘ TEST SUITES (TEST RUNNER)
 // ============================================================================
 
@@ -766,9 +937,10 @@ export async function runAllWebhookTests(): Promise<void> {
     const p03 = await runP03Tests();
     const p04 = await runP04Tests();
     const p05 = await runP05Tests();
+    const p06 = await runP06Tests();
 
-    const totalPassed = p02.passed + p03.passed + p04.passed + p05.passed;
-    const totalFailed = p02.failed + p03.failed + p04.failed + p05.failed;
+    const totalPassed = p02.passed + p03.passed + p04.passed + p05.passed + p06.passed;
+    const totalFailed = p02.failed + p03.failed + p04.failed + p05.failed + p06.failed;
 
     console.log('\n================================================================');
     console.log(`TỔNG KẾT KIỂM THỬ: ${totalPassed} PASSED / ${totalFailed} FAILED`);
@@ -778,4 +950,3 @@ export async function runAllWebhookTests(): Promise<void> {
         throw new Error(`Có ${totalFailed} ca kiểm thử thất bại!`);
     }
 }
-
