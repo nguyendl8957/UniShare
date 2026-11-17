@@ -110,9 +110,11 @@ class AuthFlowTest {
 
         // 3. Nhập email và mật khẩu hợp lệ rồi bấm Đăng nhập
         composeTestRule
-            .onNodeWithContentDescription("Ô nhập liệu cho Email hoặc số điện thoại")
+            .onNodeWithContentDescription("Ô nhập liệu cho Email")
             .performTextReplacement("khang@ut.edu.vn")
-        composeTestRule.onNodeWithTag("input_password").performTextReplacement("123456")
+        composeTestRule
+            .onNodeWithContentDescription("Ô nhập liệu cho Mật khẩu")
+            .performTextReplacement("123456")
         composeTestRule.onNodeWithTag("btn_submit_auth").performClick()
         composeTestRule.waitForIdle()
 
