@@ -40,16 +40,3 @@ firebase-debug.log
 firestore-debug.log
 ui-debug.log
 **/*-debug.log
-
-# Personal instructions for Antigravity
-/AGENTS.md
-
-# Personal AI rules, skills, workflows and configurations
-/.agents/
-
-# =====================================
-# Local project documentation
-# =====================================
-
-# Ignore the entire local documentation folder
-/Doc/
