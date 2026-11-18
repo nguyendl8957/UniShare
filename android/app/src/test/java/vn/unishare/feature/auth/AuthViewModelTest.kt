@@ -94,6 +94,16 @@ class AuthViewModelTest {
         assertEquals(0, fakeRepo.signInCallCount)
         assertNull(viewModel.uiState.value.emailError)
         assertNotNull(viewModel.uiState.value.passwordError)
+
+        // 3. Đăng ký với mật khẩu xác nhận không khớp -> không gọi signUp
+        viewModel.switchFormMode(AuthFormMode.REGISTER)
+        viewModel.submit(
+            emailInput = "khang@ut.edu.vn",
+            passwordInput = "123456",
+            confirmPasswordInput = "654321"
+        )
+        assertEquals(0, fakeRepo.signUpCallCount)
+        assertNotNull(viewModel.uiState.value.confirmPasswordError)
     }
 
     @Test

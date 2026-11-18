@@ -1,5 +1,6 @@
 package vn.unishare.core.ui.feedback
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,49 +10,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import vn.unishare.R
 import vn.unishare.core.ui.components.UniButton
 import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
-
-// Biểu tượng cảnh báo lỗi dựng bằng ImageVector để không phụ thuộc thư viện ngoài A01
-private val WarningVector: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "Warning",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f
-    ).apply {
-        path(fill = SolidColor(Color.Black)) {
-            moveTo(1f, 21f)
-            horizontalLineToRelative(22f)
-            lineTo(12f, 2f)
-            lineTo(1f, 21f)
-            close()
-            moveTo(13f, 18f)
-            horizontalLineToRelative(-2f)
-            verticalLineToRelative(-2f)
-            horizontalLineToRelative(2f)
-            verticalLineToRelative(2f)
-            close()
-            moveTo(13f, 14f)
-            horizontalLineToRelative(-2f)
-            verticalLineToRelative(-4f)
-            horizontalLineToRelative(2f)
-            verticalLineToRelative(4f)
-            close()
-        }
-    }.build()
-}
 
 // Áp dụng Đa hình / Sealed Interface cho các trạng thái phản hồi giao diện
 sealed interface UiFeedbackState {
@@ -100,11 +69,12 @@ fun UiFeedback(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.semantics { contentDescription = "Màn hình chào mừng UniShare" }
                 ) {
-                    Text(
-                        text = "UniShare",
-                        style = MaterialTheme.typography.displayMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                    Image(
+                        painter = painterResource(id = R.drawable.unishare_wordmark),
+                        contentDescription = "Biểu trưng UniShare",
+                        modifier = Modifier
+                            .width(134.dp)
+                            .height(48.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -185,6 +155,14 @@ private fun EmptyScreen(
             .padding(horizontal = 30.dp, vertical = 24.dp)
             .semantics { contentDescription = "Màn hình rỗng: $message" }
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.ic_search_empty_illustration),
+            contentDescription = null,
+            modifier = Modifier
+                .width(132.dp)
+                .height(108.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = message,
             style = MaterialTheme.typography.titleMedium,
@@ -213,7 +191,7 @@ private fun ErrorScreen(message: String, onRetry: () -> Unit) {
             .semantics { contentDescription = "Màn hình lỗi: $message" }
     ) {
         Icon(
-            imageVector = WarningVector,
+            painter = painterResource(id = R.drawable.ic_warning),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.error,
             modifier = Modifier.size(56.dp)
@@ -270,4 +248,5 @@ private fun PreviewUiFeedbackSkeleton() {
         }
     }
 }
+
 
