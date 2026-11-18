@@ -76,18 +76,29 @@ class AuthViewModel(
                 formMode = mode,
                 emailError = null,
                 passwordError = null,
+                confirmPasswordError = null,
                 generalError = null,
                 resetEmailSentMessage = null
             )
         }
     }
 
-    fun submit(emailInput: String = _uiState.value.email, passwordInput: String = "") {
+    fun submit(
+        emailInput: String = _uiState.value.email,
+        passwordInput: String = "",
+        confirmPasswordInput: String? = null
+    ) {
         // Chặn gửi trùng khi request trước đang xử lý
         if (_uiState.value.isLoading) return
 
         val trimmedEmail = emailInput.trim()
-        _uiState.update { it.copy(email = trimmedEmail, resetEmailSentMessage = null) }
+        _uiState.update {
+            it.copy(
+                email = trimmedEmail,
+                confirmPasswordError = null,
+                resetEmailSentMessage = null
+            )
+        }
 
         val mode = _uiState.value.formMode
         val isEmailValid = validateEmail(trimmedEmail)
@@ -96,9 +107,14 @@ class AuthViewModel(
         } else {
             validatePassword(passwordInput)
         }
+        val isConfirmValid = if (mode == AuthFormMode.REGISTER && confirmPasswordInput != null) {
+            validateConfirmPassword(passwordInput, confirmPasswordInput)
+        } else {
+            true
+        }
 
         // Nếu dữ liệu không hợp lệ thì dừng ngay, không gọi xuống Repository
-        if (!isEmailValid || !isPasswordValid) return
+        if (!isEmailValid || !isPasswordValid || !isConfirmValid) return
 
         _uiState.update { it.copy(isLoading = true, generalError = null) }
 
@@ -183,6 +199,16 @@ class AuthViewModel(
             false
         } else {
             _uiState.update { it.copy(passwordError = null) }
+            true
+        }
+    }
+
+    private fun validateConfirmPassword(password: String, confirmPassword: String): Boolean {
+        return if (confirmPassword.isBlank() || confirmPassword != password) {
+            _uiState.update { it.copy(confirmPasswordError = "Mật khẩu xác nhận không khớp") }
+            false
+        } else {
+            _uiState.update { it.copy(confirmPasswordError = null) }
             true
         }
     }
