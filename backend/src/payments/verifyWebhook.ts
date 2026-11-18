@@ -103,7 +103,7 @@ export function extractPaymentCodeFromContent(content: string): {
 
     // Biểu thức chính quy với ranh giới từ: bắt buộc UNI theo sau bởi đúng 6 ký tự hex,
     // không bị dính liền với ký tự chữ hoặc số khác ở hai đầu.
-    const regex = /(?<![0-9A-Za-z])UNI[0-9A-Fa-f]{6}(?![0-9A-Za-z])/g;
+    const regex = /(?<![0-9A-Za-z])UNI[0-9A-Fa-f]{6}(?![0-9A-Za-z])/gi;
     const matches = content.match(regex);
 
     if (!matches || matches.length === 0) {
