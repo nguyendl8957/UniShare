@@ -44,10 +44,10 @@ enum class OrderStatus {
  * Dùng để render thông tin cho Buyer thực hiện quét mã QR hoặc chuyển khoản.
  */
 data class BankTransferInfo(
-    val bankName: String = "Ngân hàng Thương mại Cổ phần Quân đội (MB)",
-    val bankCode: String = "MB",
-    val accountNumber: String = "0345678999",
-    val accountHolder: String = "UNISHARE SYSTEM",
+    val bankName: String = "",
+    val bankCode: String = "",
+    val accountNumber: String = "",
+    val accountHolder: String = "",
     val amountVnd: Long = 0L,
     val paymentCode: String = "" // Ví dụ: "UNI8A3F12"
 )
@@ -65,7 +65,7 @@ data class OrderUiModel(
     val paymentCode: String,
     val createdAtUtc: String,
     val expiresAtUtc: String,
-    val transferInfo: BankTransferInfo
+    val transferInfo: BankTransferInfo? = null
 )
 
 /**

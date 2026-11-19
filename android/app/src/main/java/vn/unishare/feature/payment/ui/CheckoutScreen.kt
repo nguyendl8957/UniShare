@@ -259,13 +259,23 @@ fun CheckoutScreenContent(
             when (uiState.status) {
                 OrderStatus.PENDING -> {
                     // CHỈ hiển thị thông tin ngân hàng khi PENDING và còn hạn
-                    BankTransferSection(
-                        transferInfo = order.transferInfo,
-                        remainingSeconds = uiState.remainingSeconds,
-                        isPolling = uiState.isPolling,
-                        onCopyField = onCopyField,
-                        onManualRefresh = onManualRefresh
-                    )
+                    val bankInfo = order.transferInfo
+                    if (bankInfo != null && uiState.remainingSeconds > 0L) {
+                        BankTransferSection(
+                            transferInfo = bankInfo,
+                            remainingSeconds = uiState.remainingSeconds,
+                            isPolling = uiState.isPolling,
+                            onCopyField = onCopyField,
+                            onManualRefresh = onManualRefresh
+                        )
+                    } else {
+                        Text(
+                            text = "Chưa có thông tin chuyển khoản hợp lệ. Vui lòng không chuyển tiền và thử lại sau.",
+                            color = Color(0xFFB45309),
+                            fontSize = 13.sp,
+                            modifier = Modifier.testTag("text_bank_unavailable")
+                        )
+                    }
                 }
                 OrderStatus.PAID -> {
                     // Thành công: Ẩn tài khoản ngân hàng, hiện nút mở đọc PDF

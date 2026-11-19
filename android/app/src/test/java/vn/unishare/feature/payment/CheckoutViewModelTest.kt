@@ -279,7 +279,7 @@ class CheckoutViewModelTest {
 
     @Test
     fun backAndOpenReader_emitCorrectEvents() = runBlocking {
-        val fakeRepo = FakeOrderRepository()
+        val fakeRepo = FakeOrderRepository(initialStatus = OrderStatus.PAID)
         val viewModel = CheckoutViewModel(
             docId = "doc_test_101",
             orderRepository = fakeRepo,

@@ -187,7 +187,8 @@ class CheckoutScreenTest {
                         isLoading = false,
                         status = OrderStatus.PENDING,
                         order = sampleOrder,
-                        networkError = "Mất kết nối mạng. Vui lòng kiểm tra Internet và bấm Thử lại."
+                        networkError = "Mất kết nối mạng. Vui lòng kiểm tra Internet và bấm Thử lại.",
+                        remainingSeconds = 850L
                     ),
                     onCopyField = { _, _ -> },
                     onManualRefresh = { retryClicked = true },
@@ -270,7 +271,8 @@ class CheckoutScreenTest {
                     uiState = CheckoutUiState(
                         isLoading = false,
                         order = null,
-                        networkError = "Mất kết nối mạng. Vui lòng kiểm tra Internet và bấm Thử lại."
+                        networkError = "Mất kết nối mạng. Vui lòng kiểm tra Internet và bấm Thử lại.",
+                        remainingSeconds = 850L
                     ),
                     onCopyField = { _, _ -> },
                     onManualRefresh = { retryClicked = true },

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import vn.unishare.domain.repository.AuthRepository
 import vn.unishare.domain.repository.AuthSession
+import vn.unishare.data.remote.OrderApiException
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
@@ -112,13 +113,10 @@ class CheckoutViewModel(
                     statusResult
                 } else {
                     val error = statusResult.exceptionOrNull()
-                    val msg = error?.message.orEmpty()
-                    // Nếu lỗi do mất mạng, không fallback tạo đơn mới mà giữ nguyên để retry
-                    if (error is IOException || msg.contains("network", ignoreCase = true) || msg.contains("offline", ignoreCase = true)) {
-                        statusResult
-                    } else {
-                        // Đơn cũ không tồn tại hoặc lỗi khác -> thử tạo/tái sử dụng theo docId
+                    if (error is OrderApiException && error.httpStatus == 404) {
                         orderRepository.createOrGetOrder(docId, idempotencyKey)
+                    } else {
+                        statusResult
                     }
                 }
             } else {
@@ -176,33 +174,57 @@ class CheckoutViewModel(
     private fun handleOrderFailure(error: Throwable) {
         val message = error.message.orEmpty()
 
-        if (error is IOException || message.contains("network", ignoreCase = true) || message.contains("offline", ignoreCase = true)) {
-            // Mất kết nối mạng: Giữ nguyên trạng thái PENDING an toàn, hiển thị lỗi có thể thử lại
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    networkError = "Mất kết nối mạng. Vui lòng kiểm tra Internet và bấm Thử lại."
-                )
+        val unauthorized =
+            (error is OrderApiException && error.httpStatus == 401) ||
+            message.contains("401 Unauthorized", ignoreCase = true)
+
+        when {
+            unauthorized -> {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        businessError = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
+                    )
+                }
+                viewModelScope.launch(mainDispatcher) {
+                    _eventChannel.send(
+                        CheckoutEvent.NavigateToAuth("checkout:$docId")
+                    )
+                }
             }
-        } else if (message.contains("401") || message.contains("unauthorized", ignoreCase = true)) {
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    businessError = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
-                )
+
+            error is OrderApiException && error.httpStatus >= 500 -> {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        networkError = "Máy chủ tạm thời không phản hồi. Vui lòng thử lại."
+                    )
+                }
             }
-            viewModelScope.launch(mainDispatcher) {
-                _eventChannel.send(CheckoutEvent.NavigateToAuth("checkout:$docId"))
+
+            error is IOException && error !is OrderApiException -> {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        networkError = "Mất kết nối mạng. Vui lòng thử lại."
+                    )
+                }
             }
-        } else {
-            // Lỗi nghiệp vụ từ B02 (ví dụ: ALREADY_OWNED, SELF_PURCHASE, DOCUMENT_NOT_FOUND)
-            val friendlyMsg = mapBusinessErrorMessage(message)
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    status = OrderStatus.FAILED,
-                    businessError = friendlyMsg
-                )
+
+            else -> {
+                val errorCode = if (error is OrderApiException) {
+                    error.errorCode
+                } else {
+                    message
+                }
+
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        status = OrderStatus.FAILED,
+                        businessError = mapBusinessErrorMessage(errorCode)
+                    )
+                }
             }
         }
     }
@@ -383,6 +405,15 @@ class CheckoutViewModel(
      * Người dùng bấm nút "Mở tài liệu đọc ngay" khi đơn đã PAID
      */
     fun onOpenReaderClicked() {
+        val current = _uiState.value
+
+        if (
+            current.status != OrderStatus.PAID ||
+            current.order?.status != OrderStatus.PAID
+        ) {
+            return
+        }
+
         viewModelScope.launch(mainDispatcher) {
             _eventChannel.send(CheckoutEvent.NavigateToReader(docId))
         }
