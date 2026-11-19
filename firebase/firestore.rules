@@ -65,6 +65,12 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Buyer chi duoc doc entitlement cua chinh minh.
+    // Chi backend Admin SDK duoc cap, sua hoac thu hoi quyen.
+    match /entitlements/{uid}/items/{docId} {
+      allow get: if isOwner(uid);
+      allow list, create, update, delete: if false;
+    }
     // Tat ca collection khac deu bi chan mac dinh.
     match /{document=**} {
       allow read, write: if false;
