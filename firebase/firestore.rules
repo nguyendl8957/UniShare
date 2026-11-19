@@ -27,6 +27,7 @@ service cloud.firestore {
         );
     }
 
+    // Ho so rieng: chi chu tai khoan duoc doc/sua.
     match /users/{uid} {
       allow get: if isOwner(uid);
       allow list: if false;
@@ -47,7 +48,30 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Các collection khác vẫn bị chặn mặc định.
+    // Catalog la public projection do backend quan ly.
+    // Backend chi tao khi publish, xoa khi archive.
+    match /catalog/{docId} {
+      allow get: if true;
+      allow list: if request.query.limit != null
+        && request.query.limit <= 20;
+      allow create, update, delete: if false;
+    }
+
+    // Thong tin Seller cong khai, khong chua email/thanh toan.
+    match /sellerPublic/{uid} {
+      allow get: if true;
+      allow list: if request.query.limit != null
+        && request.query.limit <= 20;
+      allow create, update, delete: if false;
+    }
+
+    // Buyer chi duoc doc entitlement cua chinh minh.
+    // Chi backend Admin SDK duoc cap, sua hoac thu hoi quyen.
+    match /entitlements/{uid}/items/{docId} {
+      allow get: if isOwner(uid);
+      allow list, create, update, delete: if false;
+    }
+    // Tat ca collection khac deu bi chan mac dinh.
     match /{document=**} {
       allow read, write: if false;
     }
