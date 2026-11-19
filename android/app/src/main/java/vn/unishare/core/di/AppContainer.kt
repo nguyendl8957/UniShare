@@ -1,11 +1,14 @@
-package vn.unishare.core.di
+﻿package vn.unishare.core.di
 
 import com.google.firebase.auth.FirebaseAuth
-import vn.unishare.data.firebase.FirebaseAuthRepository
-import vn.unishare.domain.repository.AuthRepository
 import com.google.firebase.firestore.FirebaseFirestore
+import vn.unishare.data.firebase.FirebaseAuthRepository
 import vn.unishare.data.firebase.FirestoreProfileRepository
+import vn.unishare.data.remote.OrderApiAdapter
+import vn.unishare.domain.repository.AuthRepository
 import vn.unishare.domain.repository.ProfileRepository
+import vn.unishare.feature.payment.ui.ApiOrderRepository
+import vn.unishare.feature.payment.ui.OrderRepository
 
 class AppContainer {
 
@@ -21,6 +24,21 @@ class AppContainer {
         FirestoreProfileRepository(
             auth = FirebaseAuth.getInstance(),
             firestore = FirebaseFirestore.getInstance()
+        )
+    }
+
+    /**
+     * B04 Checkout uses A07 authenticated Order API.
+     *
+     * Caller must supply an explicit backend URL.
+     * There is deliberately no fake or production bank account.
+     */
+    fun createOrderRepository(apiBaseUrl: String): OrderRepository {
+        return ApiOrderRepository(
+            api = OrderApiAdapter(
+                auth = FirebaseAuth.getInstance(),
+                apiBaseUrl = apiBaseUrl
+            )
         )
     }
 }
