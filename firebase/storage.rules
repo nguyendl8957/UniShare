@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // PDF gốc: chỉ backend được truy cập bằng Admin SDK/IAM.
+    match /private/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Tệp staging: tạm khóa cho đến khi hoàn thiện
+    // kiểm tra Seller, draft ownership và giới hạn upload.
+    match /staging/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Preview: tạm khóa cho đến khi kết nối
+    // metadata published của catalogue.
+    match /previews/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Mọi đường dẫn chưa khai báo đều bị từ chối.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
