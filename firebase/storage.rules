@@ -3,24 +3,92 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // PDF gốc: chỉ backend được truy cập bằng Admin SDK/IAM.
+    function signedInAs(uid) {
+      return request.auth != null
+        && request.auth.uid == uid;
+    }
+
+    function validDraft(uid, docId, versionId) {
+      let user = firestore.get(
+        /databases/(default)/documents/users/$(uid)
+      );
+
+      let document = firestore.get(
+        /databases/(default)/documents/documents/$(docId)
+      );
+
+      return user.data.sellerEnabled == true
+        && document.data.sellerId == uid
+        && document.data.status == 'DRAFT'
+        && document.data.activeVersionId == versionId;
+    }
+
+    function allowedUploader(uid, docId, versionId) {
+      return signedInAs(uid)
+        && validDraft(uid, docId, versionId);
+    }
+
+    function isPublishedPreview(docId, versionId, fileName) {
+      let catalog = firestore.get(
+        /databases/(default)/documents/catalog/$(docId)
+      );
+
+      let previewPath =
+        'previews/' + docId + '/' + versionId + '/' + fileName;
+
+      return catalog.data.previewRefs is list
+        && previewPath in catalog.data.previewRefs;
+    }
+
+    // PDF goc: client khong duoc doc, ghi hoac tai truc tiep.
     match /private/{allPaths=**} {
       allow read, write: if false;
     }
 
-    // Tệp staging: tạm khóa cho đến khi hoàn thiện
-    // kiểm tra Seller, draft ownership và giới hạn upload.
-    match /staging/{allPaths=**} {
-      allow read, write: if false;
+    // Seller chi duoc tao mot PDF trong staging cua draft.
+    match /staging/{uid}/{docId}/{versionId}/pdf/{fileName} {
+      allow get: if allowedUploader(uid, docId, versionId);
+      allow list: if false;
+
+      allow create: if
+        allowedUploader(uid, docId, versionId)
+        && fileName == 'source.pdf'
+        && request.resource.size > 0
+        && request.resource.size <= 25 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+
+      allow update, delete: if false;
     }
 
-    // Preview: tạm khóa cho đến khi kết nối
-    // metadata published của catalogue.
-    match /previews/{allPaths=**} {
-      allow read, write: if false;
+    // Toi da 5 anh preview, moi anh toi da 5 MiB.
+    match /staging/{uid}/{docId}/{versionId}/previews/{fileName} {
+      allow get: if allowedUploader(uid, docId, versionId);
+      allow list: if false;
+
+      allow create: if
+        allowedUploader(uid, docId, versionId)
+        && fileName.matches('[1-5]\\.(jpg|jpeg|png)')
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && (
+          request.resource.contentType == 'image/jpeg'
+          || request.resource.contentType == 'image/png'
+        );
+
+      allow update, delete: if false;
     }
 
-    // Mọi đường dẫn chưa khai báo đều bị từ chối.
+    // Chi anh co trong catalog previewRefs moi duoc doc.
+    // Archive xoa catalog -> mat quyen doc.
+    match /previews/{docId}/{versionId}/{fileName} {
+      allow get: if isPublishedPreview(
+        docId, versionId, fileName
+      );
+
+      allow list, create, update, delete: if false;
+    }
+
+    // Mac dinh chan moi duong dan khac.
     match /{allPaths=**} {
       allow read, write: if false;
     }
