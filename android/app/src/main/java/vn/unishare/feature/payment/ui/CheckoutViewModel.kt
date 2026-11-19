@@ -111,8 +111,15 @@ class CheckoutViewModel(
                 if (statusResult.isSuccess) {
                     statusResult
                 } else {
-                    // Nếu không lấy được đơn cũ, thử tạo/tái sử dụng theo docId
-                    orderRepository.createOrGetOrder(docId, idempotencyKey)
+                    val error = statusResult.exceptionOrNull()
+                    val msg = error?.message.orEmpty()
+                    // Nếu lỗi do mất mạng, không fallback tạo đơn mới mà giữ nguyên để retry
+                    if (error is IOException || msg.contains("network", ignoreCase = true) || msg.contains("offline", ignoreCase = true)) {
+                        statusResult
+                    } else {
+                        // Đơn cũ không tồn tại hoặc lỗi khác -> thử tạo/tái sử dụng theo docId
+                        orderRepository.createOrGetOrder(docId, idempotencyKey)
+                    }
                 }
             } else {
                 orderRepository.createOrGetOrder(docId, idempotencyKey)
@@ -238,10 +245,10 @@ class CheckoutViewModel(
 
                         // Nếu đã thanh toán thành công (PAID) hoặc trạng thái kết thúc -> Dừng poll
                         if (newStatus != OrderStatus.PENDING) {
-                            stopPolling()
                             if (newStatus == OrderStatus.PAID) {
                                 _eventChannel.send(CheckoutEvent.ShowSnackbar("Thanh toán thành công!"))
                             }
+                            stopPolling()
                             return@launch
                         }
                     },
@@ -342,6 +349,9 @@ class CheckoutViewModel(
                             )
                         }
                         if (updated.status != OrderStatus.PENDING) {
+                            if (updated.status == OrderStatus.PAID) {
+                                _eventChannel.send(CheckoutEvent.ShowSnackbar("Thanh toán thành công!"))
+                            }
                             stopPolling()
                         }
                     },
@@ -353,6 +363,19 @@ class CheckoutViewModel(
             }
         } else {
             loadOrCreateOrder()
+        }
+    }
+
+    /**
+     * Tự động khôi phục polling hoặc làm mới trạng thái khi màn hình Resume
+     */
+    fun onScreenResumed() {
+        val currentOrder = _uiState.value.order
+        if (currentOrder != null && _uiState.value.status == OrderStatus.PENDING) {
+            manualRefresh()
+            if (pollingJob == null || pollingJob?.isActive != true) {
+                startPolling(currentOrder.orderId)
+            }
         }
     }
 

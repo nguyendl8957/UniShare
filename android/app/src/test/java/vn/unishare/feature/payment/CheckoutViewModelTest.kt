@@ -109,6 +109,43 @@ class CheckoutViewModelTest {
     }
 
     @Test
+    fun networkError_onExistingOrderId_reportsNetworkError_withoutCallingCreateOrder() = runBlocking {
+        val fakeRepo = FakeOrderRepository().apply {
+            nextResult = Result.failure(IOException("Mất mạng khi lấy đơn"))
+        }
+        val handle = SavedStateHandle(mapOf(KEY_CHECKOUT_ORDER_ID to "ord_saved_888"))
+        val viewModel = CheckoutViewModel(
+            docId = "doc_test_101",
+            orderRepository = fakeRepo,
+            authRepository = TestFakeAuthRepository(),
+            savedStateHandle = handle,
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        // Không được fallback tạo đơn mới khi lỗi là do mạng
+        assertEquals(0, fakeRepo.createCallCount)
+        assertTrue(fakeRepo.getStatusCallCount >= 1)
+        assertTrue(viewModel.uiState.value.networkError.orEmpty().contains("Mất kết nối mạng"))
+    }
+
+    @Test
+    fun onScreenResumed_refreshesPendingOrder() = runBlocking {
+        val fakeRepo = FakeOrderRepository()
+        val viewModel = CheckoutViewModel(
+            docId = "doc_test_101",
+            orderRepository = fakeRepo,
+            authRepository = TestFakeAuthRepository(),
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        val initialStatusCallCount = fakeRepo.getStatusCallCount
+        // Khi màn hình Resume trở lại -> tự động kiểm tra lại trạng thái
+        viewModel.onScreenResumed()
+        assertTrue(fakeRepo.getStatusCallCount > initialStatusCallCount)
+    }
+
+    @Test
     fun networkError_keepsPendingStatus_and_setsNetworkErrorMessage() = runBlocking {
         val fakeRepo = FakeOrderRepository().apply {
             nextResult = Result.failure(IOException("Không thể kết nối Internet"))

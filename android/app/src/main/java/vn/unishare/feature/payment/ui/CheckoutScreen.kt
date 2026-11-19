@@ -20,6 +20,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.flow.collectLatest
 import vn.unishare.R
 import vn.unishare.core.ui.components.UniButton
@@ -43,10 +46,21 @@ fun CheckoutScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val clipboardManager = LocalClipboardManager.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Thu dọn polling khi rời màn hình
-    DisposableEffect(viewModel) {
+    // Quản lý polling theo vòng đời màn hình: Tự động tải lại khi Resume và dừng khi Pause
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> viewModel.onScreenResumed()
+                Lifecycle.Event.ON_PAUSE -> viewModel.stopPolling()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             viewModel.stopPolling()
         }
     }
@@ -58,13 +72,17 @@ fun CheckoutScreen(
                 is CheckoutEvent.NavigateToReader -> onNavigateToReader(event.docId)
                 is CheckoutEvent.NavigateToAuth -> onNavigateToAuth(event.returnTarget)
                 is CheckoutEvent.NavigateBack -> onNavigateBack()
-                is CheckoutEvent.ShowSnackbar -> onShowSnackbar(event.message)
+                is CheckoutEvent.ShowSnackbar -> {
+                    snackbarHostState.showSnackbar(event.message)
+                    onShowSnackbar(event.message)
+                }
             }
         }
     }
 
     CheckoutScreenContent(
         uiState = uiState,
+        snackbarHostState = snackbarHostState,
         onCopyField = { label, text ->
             clipboardManager.setText(AnnotatedString(text))
             viewModel.copyField(label, text)
@@ -81,6 +99,7 @@ fun CheckoutScreen(
 @Composable
 fun CheckoutScreenContent(
     uiState: CheckoutUiState,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     onCopyField: (label: String, text: String) -> Unit,
     onManualRefresh: () -> Unit,
     onOpenReader: () -> Unit,
@@ -95,6 +114,7 @@ fun CheckoutScreenContent(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.White,
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             // Thanh tiêu đề TopBar
             Row(
@@ -130,7 +150,18 @@ fun CheckoutScreenContent(
             return@Scaffold
         }
 
-        // Lỗi không có đơn hàng
+        // Lỗi mất mạng lần đầu khi chưa có đơn hàng
+        if (uiState.networkError != null && uiState.order == null) {
+            UiFeedback(
+                state = UiFeedbackState.Error(
+                    message = uiState.networkError,
+                    onRetry = onManualRefresh
+                )
+            )
+            return@Scaffold
+        }
+
+        // Lỗi nghiệp vụ không có đơn hàng
         if (uiState.businessError != null && uiState.order == null) {
             UiFeedback(
                 state = UiFeedbackState.Error(

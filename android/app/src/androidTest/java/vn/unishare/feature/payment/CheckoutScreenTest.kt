@@ -229,5 +229,61 @@ class CheckoutScreenTest {
         composeTestRule.onNodeWithTag("btn_checkout_back").performClick()
         assertTrue(backClicked)
     }
+
+    @Test
+    fun failedState_hidesBankInstructions_and_showsErrorMessage() {
+        var backClicked = false
+
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.BUYER) {
+                CheckoutScreenContent(
+                    uiState = CheckoutUiState(
+                        isLoading = false,
+                        status = OrderStatus.FAILED,
+                        order = sampleOrder.copy(status = OrderStatus.FAILED),
+                        businessError = "Bạn là tác giả của tài liệu này nên không thể tự mua."
+                    ),
+                    onCopyField = { _, _ -> },
+                    onManualRefresh = {},
+                    onOpenReader = {},
+                    onBack = { backClicked = true }
+                )
+            }
+        }
+
+        // Bất biến: Ẩn thông tin ngân hàng khi FAILED
+        composeTestRule.onNodeWithTag("section_bank_instructions").assertDoesNotExist()
+
+        // Hiển thị thông báo lỗi nghiệp vụ và nút Quay lại
+        composeTestRule.onNodeWithText("Bạn là tác giả của tài liệu này nên không thể tự mua.").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Quay lại").performClick()
+        assertTrue(backClicked)
+    }
+
+    @Test
+    fun initialOfflineLoad_showsUiFeedbackError_andAllowsRetry() {
+        var retryClicked = false
+
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.BUYER) {
+                CheckoutScreenContent(
+                    uiState = CheckoutUiState(
+                        isLoading = false,
+                        order = null,
+                        networkError = "Mất kết nối mạng. Vui lòng kiểm tra Internet và bấm Thử lại."
+                    ),
+                    onCopyField = { _, _ -> },
+                    onManualRefresh = { retryClicked = true },
+                    onOpenReader = {},
+                    onBack = {}
+                )
+            }
+        }
+
+        // Không bị màn hình trắng, hiển thị thông báo lỗi mạng và nút Thử lại
+        composeTestRule.onNodeWithText("Mất kết nối mạng. Vui lòng kiểm tra Internet và bấm Thử lại.").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Thử lại").performClick()
+        assertTrue(retryClicked)
+    }
 }
 
