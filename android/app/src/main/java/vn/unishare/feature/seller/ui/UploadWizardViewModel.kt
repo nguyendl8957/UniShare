@@ -44,11 +44,11 @@ class UploadWizardViewModel(
         val current = _wizardState.value
         val normalizedMime = image.mimeType.trim().lowercase()
         if (normalizedMime !in ALLOWED_PREVIEW_IMAGE_MIMES) {
-            setPreviewError("Chỉ hỗ trợ ảnh JPG, PNG hoặc WEBP.")
+            setPreviewError("Chỉ hỗ trợ ảnh JPG hoặc PNG.")
             return
         }
         if (image.sizeBytes <= 0L || image.sizeBytes > MAX_PREVIEW_IMAGE_BYTES) {
-            setPreviewError("Dung lượng mỗi ảnh preview không được vượt quá 10MB.")
+            setPreviewError("Dung lượng mỗi ảnh preview không được vượt quá 5 MiB.")
             return
         }
         if (current.previewImages.size >= MAX_PREVIEW_IMAGES) {
@@ -124,7 +124,7 @@ class UploadWizardViewModel(
             return
         }
         if (pdf.sizeBytes > MAX_PDF_BYTES) {
-            setPdfError("Dung lượng tệp PDF vượt quá giới hạn 50MB.")
+            setPdfError("Dung lượng tệp PDF vượt quá giới hạn 25 MiB.")
             return
         }
 
