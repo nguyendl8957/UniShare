@@ -154,9 +154,9 @@ fun CheckoutScreenContent(
         if (uiState.networkError != null && uiState.order == null) {
             UiFeedback(
                 state = UiFeedbackState.Error(
-                    message = uiState.networkError,
-                    onRetry = onManualRefresh
-                )
+                    message = uiState.networkError
+                ),
+                onRetry = onManualRefresh
             )
             return@Scaffold
         }
@@ -165,9 +165,9 @@ fun CheckoutScreenContent(
         if (uiState.businessError != null && uiState.order == null) {
             UiFeedback(
                 state = UiFeedbackState.Error(
-                    message = uiState.businessError,
-                    onRetry = onManualRefresh
-                )
+                    message = uiState.businessError
+                ),
+                onRetry = onManualRefresh
             )
             return@Scaffold
         }
