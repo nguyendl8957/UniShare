@@ -53,6 +53,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -153,7 +154,8 @@ fun PdfReaderContent(
     onAskAiClick: () -> Unit,
     onRequireLoginClick: () -> Unit,
     onBottomNavSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    renderedPage: ImageBitmap? = null
 ) {
     val isReady = readerState is PdfReaderLoadState.Ready
 
@@ -269,7 +271,23 @@ fun PdfReaderContent(
                                 .padding(horizontal = 14.dp, vertical = 14.dp)
                         ) {
                             val page = readerState.currentPageContent
-                            if (page != null) {
+                            if (renderedPage != null) {
+                                Surface(
+                                    color = Color.White,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .widthIn(max = 680.dp)
+                                        .fillMaxWidth()
+                                        .testTag("reader_real_pdf_page")
+                                ) {
+                                    Image(
+                                        bitmap = renderedPage,
+                                        contentDescription = "Trang PDF thật",
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.FillWidth
+                                    )
+                                }
+                            } else if (page != null) {
                                 PdfRenderedPageCard(
                                     page = page,
                                     modifier = Modifier.widthIn(max = 680.dp)
