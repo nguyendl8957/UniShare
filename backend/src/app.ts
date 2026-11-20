@@ -6,7 +6,9 @@ import { sendApiError } from "./shared/httpErrors";
 import { draftsRouter } from "./documents/drafts";
 import { publishRouter } from "./documents/publish";
 import { manageRouter } from "./documents/manage";
+import { contentRouter } from "./documents/content";
 import { orderRoutes } from "./orders/orderRoutes";
+import { libraryRouter } from "./documents/library";
 import { webhookRouter } from "./payments/webhookRoute";
 
 export const app = express();
@@ -31,7 +33,9 @@ app.get("/v1/me", requireAuth, (_req, res) => {
 app.use("/v1/documents", draftsRouter);
 app.use("/v1/documents", publishRouter);
 app.use("/v1/documents", manageRouter);
+app.use("/v1/documents", contentRouter);
 app.use("/v1/orders", orderRoutes);
+app.use("/v1/me", libraryRouter);
 
 app.use((_req, res) => {
   sendApiError(res, 404, "NOT_FOUND", "Route not found");
