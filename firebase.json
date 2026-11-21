@@ -20,5 +20,10 @@
       "enabled": true
     },
     "singleProjectMode": true
+  },
+  "functions": {
+    "source": "backend",
+    "runtime": "nodejs22",
+    "codebase": "default"
   }
 }

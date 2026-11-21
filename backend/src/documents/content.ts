@@ -36,7 +36,7 @@ contentRouter.get(
       return;
     }
 
-    const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+    const bucketName = (process.env.UNISHARE_STORAGE_BUCKET ?? process.env.FIREBASE_STORAGE_BUCKET);
 
     if (!bucketName) {
       sendApiError(
