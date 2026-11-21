@@ -25,7 +25,13 @@ webhookRouter.post(
       return;
     }
 
-    if (!Buffer.isBuffer(req.body)) {
+    const rawBody = Buffer.isBuffer(
+      (req as typeof req & { rawBody?: Buffer }).rawBody
+    )
+      ? (req as typeof req & { rawBody: Buffer }).rawBody
+      : req.body;
+
+    if (!Buffer.isBuffer(rawBody) || rawBody.length > 128 * 1024) {
       res.status(415).json({
         success: false,
         error: "JSON_BODY_REQUIRED"
@@ -34,7 +40,7 @@ webhookRouter.post(
     }
 
     const verification = verifyWebhookSignature(
-      req.body.toString("utf8"),
+      rawBody.toString("utf8"),
       req.headers,
       secret
     );

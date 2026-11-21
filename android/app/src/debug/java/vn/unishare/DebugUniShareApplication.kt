@@ -12,11 +12,15 @@ class DebugUniShareApplication : Application() {
         super.onCreate()
 
         FirebaseApp.initializeApp(this)
+        // Use Firebase Cloud for Android Debug.
+        // Change to true only when running local Emulator tests.
+        val useFirebaseEmulators = false
 
-        val host = "127.0.0.1"
-
-        FirebaseAuth.getInstance().useEmulator(host, 9099)
-        FirebaseFirestore.getInstance().useEmulator(host, 8080)
-        FirebaseStorage.getInstance().useEmulator(host, 9199)
+        if (useFirebaseEmulators) {
+            val host = "127.0.0.1"
+            FirebaseAuth.getInstance().useEmulator(host, 9099)
+            FirebaseFirestore.getInstance().useEmulator(host, 8080)
+            FirebaseStorage.getInstance().useEmulator(host, 9199)
+        }
     }
 }

@@ -52,3 +52,4 @@ ui-debug.log
 
 # Ignore the entire local documentation folder
 /Doc/
+backend/.env.unishare-db44a

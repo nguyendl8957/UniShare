@@ -372,7 +372,7 @@ publishRouter.post(
         throw new PublishConflict("Document is not a matching draft");
       }
 
-      const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+      const bucketName = (process.env.UNISHARE_STORAGE_BUCKET ?? process.env.FIREBASE_STORAGE_BUCKET);
 
       if (!bucketName) {
         throw new Error("FIREBASE_STORAGE_BUCKET is required");

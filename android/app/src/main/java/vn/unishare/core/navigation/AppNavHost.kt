@@ -63,12 +63,13 @@ fun AppNavHost(container: AppContainer) {
 
     val allowEmulatorCheckout = isDebugBuild && isEmulator
     val firebaseAuth = remember { FirebaseAuth.getInstance() }
-    val c06ApiUrl = "http://127.0.0.1:3000"
+    val c06ApiUrl = "https://asia-southeast1-unishare-db44a.cloudfunctions.net/api"
+    val enableCloudLibrary = true
 
     // C06 local backend is available only in Debug on Android Emulator.
     // Release must not silently connect to localhost.
     val libraryViewModel: PurchasedLibraryViewModel? =
-        if (allowEmulatorCheckout) {
+        if (enableCloudLibrary) {
 
             viewModel(
                 factory = viewModelFactory {
@@ -214,7 +215,7 @@ fun AppNavHost(container: AppContainer) {
                     auth = firebaseAuth,
                     pdfApi = PurchasedPdfApi(
                         auth = firebaseAuth,
-                        apiBaseUrl = "http://127.0.0.1:3000"
+                        apiBaseUrl = c06ApiUrl
                     )
                 )
             }

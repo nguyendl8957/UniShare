@@ -3,7 +3,10 @@ import { getAuth } from "firebase-admin/auth";
 import type { Request, Response, NextFunction } from "express";
 import { sendApiError } from "./httpErrors";
 
-const projectId = process.env.FIREBASE_PROJECT_ID;
+const projectId =
+  process.env.FIREBASE_PROJECT_ID ??
+  process.env.GCLOUD_PROJECT ??
+  process.env.GOOGLE_CLOUD_PROJECT;
 
 export function initializeFirebaseAdmin(): void {
     if (!projectId) {
