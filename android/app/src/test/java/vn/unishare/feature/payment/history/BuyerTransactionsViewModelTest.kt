@@ -271,4 +271,120 @@ class BuyerTransactionsViewModelTest {
         assertNotNull(state.detailError)
         assertEquals("Không tìm thấy đơn hàng của bạn", state.detailError)
     }
+
+    @Test
+    fun refresh_reloadsFirstPage_and_resetsPaginationState() = runBlocking {
+        val fakeRepo = FakeBuyerTransactionsRepository(activeUid = FakeBuyerTransactionsRepository.UID_BUYER_ONE)
+        val authRepo = TestFakeAuthRepository(AuthSession.SignedIn(FakeBuyerTransactionsRepository.UID_BUYER_ONE))
+
+        val viewModel = BuyerTransactionsViewModel(
+            authRepository = authRepo,
+            transactionsRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        // Nạp thêm trang 2
+        viewModel.loadMore()
+        assertEquals(4, (viewModel.uiState.value.listState as BuyerTransactionsListState.Content).items.size)
+        assertFalse(viewModel.uiState.value.hasMore)
+
+        // Gọi refresh -> quay về trang 1 (2 items), cursor trang 2 có lại
+        viewModel.refresh()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.isRefreshing)
+        assertTrue(state.listState is BuyerTransactionsListState.Content)
+        val content = state.listState as BuyerTransactionsListState.Content
+        assertEquals(2, content.items.size)
+        assertTrue(state.hasMore)
+        assertEquals(FakeBuyerTransactionsRepository.CURSOR_PAGE_2, state.nextCursor)
+        assertNull(state.loadMoreError)
+    }
+
+    @Test
+    fun loadOrderDetail_fetchesDetailDirectly_forDeepLink() = runBlocking {
+        val fakeRepo = FakeBuyerTransactionsRepository(activeUid = FakeBuyerTransactionsRepository.UID_BUYER_ONE)
+        val authRepo = TestFakeAuthRepository(AuthSession.SignedIn(FakeBuyerTransactionsRepository.UID_BUYER_ONE))
+
+        val viewModel = BuyerTransactionsViewModel(
+            authRepository = authRepo,
+            transactionsRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        // Tải trực tiếp không cần bấm qua UI danh sách
+        viewModel.loadOrderDetail("ord_buyer1_002")
+
+        val state = viewModel.uiState.value
+        assertNotNull(state.selectedOrderDetail)
+        assertEquals("ord_buyer1_002", state.selectedOrderDetail?.orderId)
+        assertEquals(OrderStatus.PENDING, state.selectedOrderDetail?.status)
+        assertEquals("35.000 đ", state.selectedOrderDetail?.formattedAmountVnd)
+        assertNull(state.detailError)
+    }
+
+    @Test
+    fun loadOrderDetail_offlineError_setsDetailError() = runBlocking {
+        val fakeRepo = FakeBuyerTransactionsRepository(
+            activeUid = FakeBuyerTransactionsRepository.UID_BUYER_ONE,
+            simulateOffline = true
+        )
+        val authRepo = TestFakeAuthRepository(AuthSession.SignedIn(FakeBuyerTransactionsRepository.UID_BUYER_ONE))
+
+        val viewModel = BuyerTransactionsViewModel(
+            authRepository = authRepo,
+            transactionsRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        viewModel.loadOrderDetail("ord_buyer1_001")
+
+        val state = viewModel.uiState.value
+        assertNull(state.selectedOrderDetail)
+        assertNotNull(state.detailError)
+        assertEquals("Không có kết nối mạng", state.detailError)
+    }
+
+    @Test
+    fun clearSelectedOrderDetail_resetsDetailState() = runBlocking {
+        val fakeRepo = FakeBuyerTransactionsRepository(activeUid = FakeBuyerTransactionsRepository.UID_BUYER_ONE)
+        val authRepo = TestFakeAuthRepository(AuthSession.SignedIn(FakeBuyerTransactionsRepository.UID_BUYER_ONE))
+
+        val viewModel = BuyerTransactionsViewModel(
+            authRepository = authRepo,
+            transactionsRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        viewModel.loadOrderDetail("ord_buyer1_001")
+        assertNotNull(viewModel.uiState.value.selectedOrderDetail)
+
+        viewModel.clearSelectedOrderDetail()
+        assertNull(viewModel.uiState.value.selectedOrderDetail)
+        assertNull(viewModel.uiState.value.detailError)
+    }
+
+    @Test
+    fun init_withSavedStateHandleOrderId_loadsOrderDetailDirectly() = runBlocking {
+        val fakeRepo = FakeBuyerTransactionsRepository(activeUid = FakeBuyerTransactionsRepository.UID_BUYER_ONE)
+        val authRepo = TestFakeAuthRepository(AuthSession.SignedIn(FakeBuyerTransactionsRepository.UID_BUYER_ONE))
+
+        val savedStateHandle = SavedStateHandle(mapOf("orderId" to "ord_buyer1_003"))
+
+        val viewModel = BuyerTransactionsViewModel(
+            authRepository = authRepo,
+            transactionsRepository = fakeRepo,
+            savedStateHandle = savedStateHandle,
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        val state = viewModel.uiState.value
+        assertNotNull(state.selectedOrderDetail)
+        assertEquals("ord_buyer1_003", state.selectedOrderDetail?.orderId)
+        assertEquals(OrderStatus.EXPIRED, state.selectedOrderDetail?.status)
+    }
 }

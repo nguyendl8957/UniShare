@@ -249,8 +249,8 @@ fun BuyerTransactionsContent(
                         }
                     }
 
-                    LaunchedEffect(shouldLoadMore) {
-                        if (shouldLoadMore && uiState.hasMore && !uiState.isLoadingMore) {
+                    LaunchedEffect(shouldLoadMore, uiState.hasMore, uiState.isLoadingMore, uiState.loadMoreError) {
+                        if (shouldLoadMore && uiState.hasMore && !uiState.isLoadingMore && uiState.loadMoreError == null) {
                             onLoadMore()
                         }
                     }

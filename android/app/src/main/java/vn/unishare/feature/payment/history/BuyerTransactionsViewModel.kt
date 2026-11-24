@@ -278,6 +278,7 @@ class BuyerTransactionsViewModel(
 
     private var initialLoadJob: Job? = null
     private var loadMoreJob: Job? = null
+    private var refreshJob: Job? = null
     private var detailJob: Job? = null
 
     init {
@@ -334,6 +335,12 @@ class BuyerTransactionsViewModel(
                         )
                     }
                     loadInitialTransactions()
+
+                    // Nạp chi tiết đơn hàng nếu có orderId truyền qua SavedStateHandle
+                    val initialOrderId = savedStateHandle.get<String>("orderId")
+                    if (!initialOrderId.isNullOrBlank()) {
+                        loadOrderDetail(initialOrderId)
+                    }
                 }
             }
         }
@@ -361,13 +368,14 @@ class BuyerTransactionsViewModel(
 
             result.fold(
                 onSuccess = { page ->
+                    val distinctItems = page.items.distinctBy { it.orderId }
                     val hasMore = page.nextCursor != null
                     _uiState.update {
                         it.copy(
-                            listState = if (page.items.isEmpty()) {
+                            listState = if (distinctItems.isEmpty()) {
                                 BuyerTransactionsListState.Empty
                             } else {
-                                BuyerTransactionsListState.Content(page.items)
+                                BuyerTransactionsListState.Content(distinctItems)
                             },
                             nextCursor = page.nextCursor,
                             hasMore = hasMore
@@ -409,13 +417,13 @@ class BuyerTransactionsViewModel(
 
             result.fold(
                 onSuccess = { page ->
-                    val currentItems = (currentState.listState as? BuyerTransactionsListState.Content)?.items ?: emptyList()
-                    // Khử trùng lặp ID (Dedup by orderId)
-                    val combinedItems = (currentItems + page.items).distinctBy { it.orderId }
-                    val hasMore = page.nextCursor != null
+                    _uiState.update { state ->
+                        val currentItems = (state.listState as? BuyerTransactionsListState.Content)?.items ?: emptyList()
+                        // Khử trùng lặp ID (Dedup by orderId)
+                        val combinedItems = (currentItems + page.items).distinctBy { it.orderId }
+                        val hasMore = page.nextCursor != null
 
-                    _uiState.update {
-                        it.copy(
+                        state.copy(
                             listState = BuyerTransactionsListState.Content(combinedItems),
                             nextCursor = page.nextCursor,
                             hasMore = hasMore,
@@ -441,11 +449,17 @@ class BuyerTransactionsViewModel(
     fun refresh() {
         if (_uiState.value.isGuest || _uiState.value.activeUid == null) return
 
-        viewModelScope.launch(mainDispatcher) {
+        initialLoadJob?.cancel()
+        loadMoreJob?.cancel()
+        refreshJob?.cancel()
+
+        refreshJob = viewModelScope.launch(mainDispatcher) {
             _uiState.update {
                 it.copy(
                     isRefreshing = true,
-                    refreshErrorMessage = null
+                    refreshErrorMessage = null,
+                    isLoadingMore = false,
+                    loadMoreError = null
                 )
             }
 
@@ -453,13 +467,14 @@ class BuyerTransactionsViewModel(
 
             result.fold(
                 onSuccess = { page ->
+                    val distinctItems = page.items.distinctBy { it.orderId }
                     val hasMore = page.nextCursor != null
                     _uiState.update {
                         it.copy(
-                            listState = if (page.items.isEmpty()) {
+                            listState = if (distinctItems.isEmpty()) {
                                 BuyerTransactionsListState.Empty
                             } else {
-                                BuyerTransactionsListState.Content(page.items)
+                                BuyerTransactionsListState.Content(distinctItems)
                             },
                             nextCursor = page.nextCursor,
                             hasMore = hasMore,
@@ -481,9 +496,11 @@ class BuyerTransactionsViewModel(
     }
 
     /**
-     * Xem chi tiết biên nhận của một đơn hàng
+     * Nạp chi tiết biên nhận độc lập theo mã đơn hàng (hỗ trợ Deep Link và khôi phục màn hình)
      */
-    fun selectOrder(orderId: String) {
+    fun loadOrderDetail(orderId: String) {
+        if (orderId.isBlank()) return
+
         detailJob?.cancel()
         detailJob = viewModelScope.launch(mainDispatcher) {
             _uiState.update {
@@ -503,7 +520,6 @@ class BuyerTransactionsViewModel(
                             isLoadingDetail = false
                         )
                     }
-                    _events.send(BuyerTransactionsEvent.NavigateToDetail(orderId))
                 },
                 onFailure = { error ->
                     _uiState.update {
@@ -518,6 +534,16 @@ class BuyerTransactionsViewModel(
         }
     }
 
+    /**
+     * Xem chi tiết biên nhận của một đơn hàng được chọn từ danh sách
+     */
+    fun selectOrder(orderId: String) {
+        loadOrderDetail(orderId)
+        viewModelScope.launch(mainDispatcher) {
+            _events.send(BuyerTransactionsEvent.NavigateToDetail(orderId))
+        }
+    }
+
     fun clearSelectedOrderDetail() {
         _uiState.update { it.copy(selectedOrderDetail = null, detailError = null) }
     }
@@ -525,6 +551,7 @@ class BuyerTransactionsViewModel(
     private fun cancelAllJobs() {
         initialLoadJob?.cancel()
         loadMoreJob?.cancel()
+        refreshJob?.cancel()
         detailJob?.cancel()
     }
 }

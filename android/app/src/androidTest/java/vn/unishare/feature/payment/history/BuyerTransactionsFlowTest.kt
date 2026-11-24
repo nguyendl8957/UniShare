@@ -67,7 +67,11 @@ class BuyerTransactionsFlowTest {
         expiresAtUtc = "2026-11-24T07:45:00Z",
         formattedCreatedAt = "24/11/2026 14:30",
         formattedExpiresAt = "24/11/2026 14:45",
-        formattedAmountVnd = "50.000 đ"
+        formattedAmountVnd = "50.000 đ",
+        bankName = "Ngân hàng Quân đội (MB)",
+        bankCode = "MB",
+        accountNumber = "0345678999",
+        accountHolder = "UNISHARE SYSTEM"
     )
 
     private val samplePendingDetail = BuyerTransactionDetailUiModel(
@@ -81,7 +85,39 @@ class BuyerTransactionsFlowTest {
         expiresAtUtc = "2026-11-24T08:15:00Z",
         formattedCreatedAt = "24/11/2026 15:00",
         formattedExpiresAt = "24/11/2026 15:15",
-        formattedAmountVnd = "35.000 đ"
+        formattedAmountVnd = "35.000 đ",
+        bankName = "Ngân hàng Quân đội (MB)",
+        bankCode = "MB",
+        accountNumber = "0345678999",
+        accountHolder = "UNISHARE SYSTEM"
+    )
+
+    private val sampleExpiredDetail = BuyerTransactionDetailUiModel(
+        orderId = "ord_test_003",
+        docId = "doc_os_01",
+        documentTitle = "Hệ điều hành - Đồng bộ tiến trình",
+        amountVnd = 40_000L,
+        status = OrderStatus.EXPIRED,
+        paymentCode = "UNIOS009",
+        createdAtUtc = "2026-11-23T07:30:00Z",
+        expiresAtUtc = "2026-11-23T07:45:00Z",
+        formattedCreatedAt = "23/11/2026 14:30",
+        formattedExpiresAt = "23/11/2026 14:45",
+        formattedAmountVnd = "40.000 đ"
+    )
+
+    private val sampleReviewDetail = BuyerTransactionDetailUiModel(
+        orderId = "ord_test_004",
+        docId = "doc_net_01",
+        documentTitle = "Mạng máy tính - Đề cương ôn tập",
+        amountVnd = 45_000L,
+        status = OrderStatus.REVIEW_REQUIRED,
+        paymentCode = "UNINET888",
+        createdAtUtc = "2026-11-22T07:30:00Z",
+        expiresAtUtc = "2026-11-22T07:45:00Z",
+        formattedCreatedAt = "22/11/2026 14:30",
+        formattedExpiresAt = "22/11/2026 14:45",
+        formattedAmountVnd = "45.000 đ"
     )
 
     @Test
@@ -211,5 +247,50 @@ class BuyerTransactionsFlowTest {
 
         composeTestRule.onNodeWithTag("btn_login_guest").performClick()
         assertTrue(loginClicked)
+    }
+
+    @Test
+    fun detailScreen_rendersBankTransferInformation() {
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.BUYER) {
+                BuyerTransactionDetailContent(
+                    detail = samplePaidDetail
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("text_detail_bank_name").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("text_detail_account_number").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("text_detail_account_holder").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Ngân hàng Quân đội (MB)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("0345678999").assertIsDisplayed()
+        composeTestRule.onNodeWithText("UNISHARE SYSTEM").assertIsDisplayed()
+    }
+
+    @Test
+    fun detailScreen_expiredState_rendersExpiredWarning() {
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.BUYER) {
+                BuyerTransactionDetailContent(
+                    detail = sampleExpiredDetail
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Đơn hàng đã hết hạn").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Đơn hàng đã quá thời hạn 15 phút. Tuyệt đối KHÔNG chuyển tiền vào mã thanh toán này. Nếu vẫn muốn mua tài liệu, vui lòng tạo đơn hàng mới từ trang chi tiết tài liệu.").assertIsDisplayed()
+    }
+
+    @Test
+    fun detailScreen_reviewRequiredState_rendersReviewWarning() {
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.BUYER) {
+                BuyerTransactionDetailContent(
+                    detail = sampleReviewDetail
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Đang kiểm tra đối soát").assertIsDisplayed()
     }
 }

@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -70,6 +71,7 @@ private val ReceiptBgColor = Color(0xFFFFFFFF)
 @Composable
 fun BuyerTransactionDetailScreen(
     viewModel: BuyerTransactionsViewModel,
+    orderId: String? = null,
     onBackClick: () -> Unit = {},
     onNavigateToReader: (String) -> Unit = {},
     onNavigateToCheckout: (String) -> Unit = {},
@@ -77,10 +79,25 @@ fun BuyerTransactionDetailScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
+    // Tự động tải nếu màn hình được mở qua Deep Link hoặc Route argument mà chưa có detail
+    LaunchedEffect(orderId) {
+        if (!orderId.isNullOrBlank() && uiState.selectedOrderDetail?.orderId != orderId) {
+            viewModel.loadOrderDetail(orderId)
+        }
+    }
+
     BuyerTransactionDetailContent(
         detail = uiState.selectedOrderDetail,
         isLoading = uiState.isLoadingDetail,
         errorMessage = uiState.detailError,
+        onRetry = {
+            val targetId = orderId ?: uiState.selectedOrderDetail?.orderId
+            if (!targetId.isNullOrBlank()) {
+                viewModel.loadOrderDetail(targetId)
+            } else {
+                onBackClick()
+            }
+        },
         onBackClick = onBackClick,
         onNavigateToReader = onNavigateToReader,
         onNavigateToCheckout = onNavigateToCheckout,
@@ -97,6 +114,7 @@ fun BuyerTransactionDetailContent(
     detail: BuyerTransactionDetailUiModel?,
     isLoading: Boolean = false,
     errorMessage: String? = null,
+    onRetry: () -> Unit = {},
     onBackClick: () -> Unit = {},
     onNavigateToReader: (String) -> Unit = {},
     onNavigateToCheckout: (String) -> Unit = {},
@@ -154,7 +172,7 @@ fun BuyerTransactionDetailContent(
                         state = UiFeedbackState.Error(
                             message = errorMessage ?: "Không tìm thấy thông tin biên nhận giao dịch."
                         ),
-                        onRetry = onBackClick,
+                        onRetry = onRetry,
                         modifier = Modifier.testTag("detail_error")
                     )
                 }
@@ -268,6 +286,17 @@ private fun ReceiptCard(detail: BuyerTransactionDetailUiModel) {
 
             if (detail.status == OrderStatus.PENDING && detail.formattedExpiresAt.isNotBlank()) {
                 ReceiptRow(label = "Hạn thanh toán", value = detail.formattedExpiresAt, testTag = "text_detail_expires_at")
+            }
+
+            // Thông tin ngân hàng / phương thức chuyển khoản
+            if (!detail.bankName.isNullOrBlank()) {
+                ReceiptRow(label = "Ngân hàng thụ hưởng", value = detail.bankName, testTag = "text_detail_bank_name")
+            }
+            if (!detail.accountNumber.isNullOrBlank()) {
+                ReceiptRow(label = "Số tài khoản nhận", value = detail.accountNumber, testTag = "text_detail_account_number")
+            }
+            if (!detail.accountHolder.isNullOrBlank()) {
+                ReceiptRow(label = "Chủ tài khoản nhận", value = detail.accountHolder, testTag = "text_detail_account_holder")
             }
 
             HorizontalDivider(color = CardBorderColor)
