@@ -46,7 +46,7 @@ import vn.unishare.feature.auth.ui.AuthViewModel
 import vn.unishare.feature.payment.ui.CheckoutScreen
 import vn.unishare.feature.payment.ui.CheckoutViewModel
 
-private const val DEBUG_TEST_DOCUMENT = "a07_android_adapter_test"
+private const val DEBUG_TEST_DOCUMENT = "draft_077e668cc1703bb4b3b8cd9c85ff9c8f704e282a102fa088ebe3538c033884d8"
 
 @Composable
 fun AppNavHost(container: AppContainer) {
@@ -62,6 +62,7 @@ fun AppNavHost(container: AppContainer) {
         Build.MODEL.contains("sdk_gphone", ignoreCase = true)
 
     val allowEmulatorCheckout = isDebugBuild && isEmulator
+    val allowCheckout = isDebugBuild
     val firebaseAuth = remember { FirebaseAuth.getInstance() }
     val c06ApiUrl = "https://asia-southeast1-unishare-db44a.cloudfunctions.net/api"
     val enableCloudLibrary = true
@@ -150,7 +151,7 @@ fun AppNavHost(container: AppContainer) {
                         Text("Đăng xuất (Debug)")
                     }
                 }
-                if (allowEmulatorCheckout) {
+                if (allowCheckout) {
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Button(onClick = {
@@ -312,7 +313,7 @@ fun AppNavHost(container: AppContainer) {
                 ?.getString("docId")
                 .orEmpty()
 
-            if (!allowEmulatorCheckout) {
+            if (!allowCheckout) {
                 Text("Checkout chưa được cấu hình cho môi trường này.")
             } else if (docId.isBlank()) {
                 Text("Thiếu mã tài liệu.")
@@ -324,7 +325,7 @@ fun AppNavHost(container: AppContainer) {
                             CheckoutViewModel(
                                 docId = docId,
                                 orderRepository = container.createOrderRepository(
-                                    apiBaseUrl = "http://127.0.0.1:3000"
+                                    apiBaseUrl = c06ApiUrl
                                 ),
                                 authRepository = container.authRepository,
                                 savedStateHandle = createSavedStateHandle()
@@ -335,9 +336,8 @@ fun AppNavHost(container: AppContainer) {
 
                 CheckoutScreen(
                     viewModel = checkoutViewModel,
-                    onNavigateToReader = {
-                        // A06 reader is not yet connected.
-                        navController.popBackStack()
+                    onNavigateToReader = { targetId ->
+                        navController.navigate("reader/$targetId")
                     },
                     onNavigateToAuth = {
                         // Auth return navigation will be integrated separately.
