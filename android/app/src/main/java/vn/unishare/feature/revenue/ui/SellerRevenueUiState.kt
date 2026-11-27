@@ -5,27 +5,6 @@ import vn.unishare.feature.payment.ui.OrderStatus
 /** Route điều hướng chuẩn đã thống nhất với Leader cho màn hình Doanh thu Seller. */
 const val SELLER_REVENUE_ROUTE = "seller/revenue"
 
-/**
- * ============================================================================
- * ĐẶC TẢ TRẠNG THÁI GIAO DIỆN BẢNG DOANH THU & GIAO DỊCH SELLER (B06)
- * Issue: [B06] Dựng bảng doanh thu và giao dịch của Seller (#22)
- * ============================================================================
- *
- * Nguyên tắc kiến trúc & An toàn dữ liệu (Senior Developer & Security Rules):
- * 1. Unidirectional Data Flow (UDF): Giao diện chỉ đọc trạng thái bất biến [SellerRevenueUiState],
- *    mọi tương tác được chuyển thành Intent/Function call đến [SellerRevenueViewModel].
- * 2. Phân tách rõ ràng giữa Doanh thu ghi nhận và Payout:
- *    - Toàn bộ số liệu dựa trên các đơn hàng trạng thái PAID.
- *    - Ghi nhãn cố định và minh bạch: "Doanh thu ghi nhận". Tuyệt đối KHÔNG có nút hay dữ liệu
- *      liên quan đến rút tiền hoặc payout cá nhân.
- * 3. Bảo vệ quyền riêng tư của Buyer (Privacy Protection):
- *    - Tuyệt đối không lưu giữ hay hiển thị Buyer UID, email hay thông tin tài khoản ngân hàng của Buyer.
- * 4. Cô lập dữ liệu giữa các Seller (Data Isolation):
- *    - Dữ liệu gắn chặt với [activeUid], lập tức làm sạch khi phiên đăng nhập thay đổi.
- * 5. Phân tách trạng thái phản hồi:
- *    - Hỗ trợ đầy đủ: Đang tải ban đầu (InitialLoading), Rỗng (Empty), Nội dung (Content), Lỗi (Error),
- *      Bị từ chối quyền (Denied - khi tài khoản chưa kích hoạt chế độ Seller).
- */
 
 /**
  * Bộ lọc khoảng thời gian theo quy ước ngày Việt Nam (UTC+7)
