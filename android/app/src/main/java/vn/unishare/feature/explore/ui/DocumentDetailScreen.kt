@@ -86,6 +86,8 @@ import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import java.net.HttpURLConnection
 import java.net.URL
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.tasks.await
 
 private val DetailPrimaryGreen = Color(0xFF2E7D32)
 private val DetailCtaGreen = Color(0xFF17823B)
@@ -729,7 +731,7 @@ private fun SellerPublicCard(
                     modifier = Modifier.size(13.dp)
                 )
                 Text(
-                    text = seller.rating.toString(),
+                    text = if (seller.reviewCount == 0) "Chưa có đánh giá" else seller.rating.toString(),
                     color = DetailPrimaryGreen,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold
@@ -746,7 +748,7 @@ private fun SellerPublicCard(
                         .background(DetailDividerColor)
                 )
                 Text(
-                    text = "Đã bán ${seller.soldCount}",
+                    text = if (seller.soldCount == 0) "Chưa có số liệu bán" else "Đã bán ${seller.soldCount}",
                     color = DetailMutedInk,
                     fontSize = 11.sp
                 )
@@ -1023,6 +1025,7 @@ internal fun DocumentPreviewImage(
 ) {
     var retryNonce by remember(preview.id) { mutableIntStateOf(0) }
     val isRemoteHttp = preview.imageUrl.startsWith("http://") || preview.imageUrl.startsWith("https://")
+    val isRemoteStorage = preview.imageUrl.startsWith("storage://")
     val effectiveBroken = isMarkedBroken || (preview.isBroken && retryNonce == 0)
 
     if (effectiveBroken) {
@@ -1043,7 +1046,7 @@ internal fun DocumentPreviewImage(
         return
     }
 
-    if (isRemoteHttp) {
+    if (isRemoteHttp || isRemoteStorage) {
         val remoteState by produceState<RemoteBitmapState>(
             initialValue = RemoteBitmapState.Loading,
             key1 = preview.imageUrl,
@@ -1051,18 +1054,29 @@ internal fun DocumentPreviewImage(
         ) {
             value = withContext(Dispatchers.IO) {
                 try {
-                    val connection = (URL(preview.imageUrl).openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 5_000
-                        readTimeout = 5_000
-                        instanceFollowRedirects = true
-                    }
-                    connection.inputStream.use { stream ->
-                        val bitmap = BitmapFactory.decodeStream(stream)
-                        if (bitmap != null) {
-                            RemoteBitmapState.Loaded(bitmap.asImageBitmap())
-                        } else {
-                            RemoteBitmapState.Failed
+                    val bitmap = if (isRemoteStorage) {
+                        val path = preview.imageUrl.removePrefix("storage://")
+                        val bytes = FirebaseStorage.getInstance()
+                            .getReference(path)
+                            .getBytes(5L * 1024 * 1024)
+                            .await()
+
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } else {
+                        val connection = (URL(preview.imageUrl).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 5_000
+                            readTimeout = 5_000
+                            instanceFollowRedirects = true
                         }
+                        connection.inputStream.use { stream ->
+                            BitmapFactory.decodeStream(stream)
+                        }
+                    }
+
+                    if (bitmap != null) {
+                        RemoteBitmapState.Loaded(bitmap.asImageBitmap())
+                    } else {
+                        RemoteBitmapState.Failed
                     }
                 } catch (_: Exception) {
                     RemoteBitmapState.Failed

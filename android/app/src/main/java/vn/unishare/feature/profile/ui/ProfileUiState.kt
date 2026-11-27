@@ -194,7 +194,15 @@ data class ProfileUiState(
     val sellerEnabled: Boolean = false,
     val enrollmentState: SellerEnrollmentState = SellerEnrollmentState.Idle,
     val achievements: List<ProfileAchievementBadge> = defaultProfileBadges(),
-    val sellerDashboard: SellerDashboardSummary = SellerDashboardSummary.defaultSample(),
+    val sellerDashboard: SellerDashboardSummary = SellerDashboardSummary(
+        monthlyRevenueVnd = 0,
+        revenueGrowthLabel = "Chưa có dữ liệu",
+        publishedDocCount = 0,
+        todayOrderCount = 0,
+        orderGrowthLabel = "Chưa có dữ liệu",
+        myDocuments = emptyList(),
+        recentOrders = emptyList()
+    ),
     val loadError: String? = null,
     val selectedPublicSellerId: String? = null,
     val publicSellerState: SellerPublicProfileLoadState = SellerPublicProfileLoadState.Idle

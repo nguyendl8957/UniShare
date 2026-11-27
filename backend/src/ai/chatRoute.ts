@@ -35,6 +35,29 @@ function aiError(
   });
 }
 
+export type AiProductionAccessConfig = {
+  enabled?: string;
+  apiKey?: string;
+  allowlist?: string;
+};
+
+// Fail closed: all three conditions must be satisfied.
+export function isProductionAiAllowed(
+  uid: string,
+  config: AiProductionAccessConfig
+): boolean {
+  const allowedUids = (config.allowlist ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return (
+    config.enabled === "true" &&
+    Boolean(config.apiKey?.trim()) &&
+    uid.length > 0 &&
+    allowedUids.includes(uid)
+  );
+}
 // Production deliberately has no provider until explicitly configured.
 // Tests inject a fake provider without affecting the deployed route.
 export function createAiChatRouter(
@@ -89,10 +112,14 @@ export function createAiChatRouter(
       return;
     }
 
+    // The UID is verified by requireAuth, never taken from req.body.
     const activeProvider = provider ?? (
-      process.env.UNISHARE_AI_ENABLED === "true" &&
-        process.env.GEMINI_API_KEY
-        ? createGeminiProvider(process.env.GEMINI_API_KEY)
+      isProductionAiAllowed(uid, {
+        enabled: process.env.UNISHARE_AI_ENABLED,
+        apiKey: process.env.GEMINI_API_KEY,
+        allowlist: process.env.UNISHARE_AI_TEST_UIDS
+      })
+        ? createGeminiProvider(process.env.GEMINI_API_KEY!)
         : null
     );
 
@@ -108,12 +135,13 @@ export function createAiChatRouter(
       uid, docId, question, clientMessageId
     };
 
-    // This version handles requests within the same UTC day.
-    // Cross-day retries must be implemented before production.
-    const dayUtc = utcDay();
+    // Use the same UTC date for reservation and settlement,
+    // including requests that finish after midnight.
+    const startedAt = new Date();
+    const dayUtc = utcDay(startedAt);
 
     try {
-      const begin = await beginAiRequest(identity);
+      const begin = await beginAiRequest(identity, startedAt);
 
       switch (begin.kind) {
         case "PAYLOAD_MISMATCH":
@@ -137,8 +165,12 @@ export function createAiChatRouter(
           return;
 
         case "COMPLETED": {
+          if (!begin.dayUtc) {
+            throw new Error("Completed AI request has no UTC day");
+          }
+
           const cached = await getCachedAiAnswer(
-            identity, dayUtc
+            identity, begin.dayUtc
           );
 
           if (!cached) {

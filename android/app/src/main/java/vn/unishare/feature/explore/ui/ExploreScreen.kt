@@ -1931,7 +1931,7 @@ private fun RatingCompactRow(
             modifier = Modifier.size(12.dp)
         )
         Text(
-            text = "$rating ($reviewCount)",
+            text = if (reviewCount == 0) "Chưa có đánh giá" else "$rating ($reviewCount)",
             color = ExploreSearchTitleInk,
             fontSize = 10.sp
         )

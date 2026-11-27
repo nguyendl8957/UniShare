@@ -1,6 +1,13 @@
 package vn.unishare.feature.seller.ui
 
 import android.net.Uri
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.CancellationException
 import vn.unishare.domain.repository.DocumentDraft
 import vn.unishare.domain.repository.DocumentUploadRepository as A04Repository
@@ -18,7 +25,10 @@ import vn.unishare.domain.repository.UploadedFile
  */
 class A04SellerRepositoryAdapter(
     private val a04: A04Repository,
-    private val metadataProvider: () -> UploadWizardUiState
+    private val metadataProvider: () -> UploadWizardUiState,
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    private val apiBaseUrl: String =
+        "https://asia-southeast1-unishare-db44a.cloudfunctions.net/api"
 ) : DocumentUploadRepository {
 
     private val drafts = mutableMapOf<String, DocumentDraft>()
@@ -239,13 +249,131 @@ class A04SellerRepositoryAdapter(
     }
 
     override suspend fun fetchSellerDocuments():
-            Result<List<SellerDocumentItem>> {
+            Result<List<SellerDocumentItem>> = attempt {
 
-        return Result.failure(
-            UnsupportedOperationException(
-                "A04 chưa có API tải danh sách tài liệu Seller."
+        val user = auth.currentUser
+            ?: throw IllegalStateException("Vui lòng đăng nhập.")
+
+        val token = user.getIdToken(false).await().token
+            ?: throw IllegalStateException(
+                "Không thể xác thực tài khoản."
             )
-        )
+
+        val result = withContext(Dispatchers.IO) {
+            val connection = URL(
+                "$apiBaseUrl/v1/seller/documents"
+            ).openConnection() as HttpURLConnection
+
+            try {
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 15000
+                connection.readTimeout = 20000
+                connection.instanceFollowRedirects = false
+                connection.setRequestProperty(
+                    "Authorization",
+                    "Bearer $token"
+                )
+                connection.setRequestProperty(
+                    "Accept",
+                    "application/json"
+                )
+
+                val status = connection.responseCode
+
+                if (status != 200) {
+                    val message = when (status) {
+                        401 -> "Phiên đăng nhập không hợp lệ."
+                        403 -> "Tài khoản chưa có quyền Seller."
+                        404 -> "API quản lý Seller chưa được triển khai."
+                        503 -> "Dịch vụ Seller tạm thời không khả dụng."
+                        else -> "Không thể tải tài liệu (HTTP $status)."
+                    }
+                    throw IllegalStateException(message)
+                }
+
+                val json = connection.inputStream.use {
+                    val bytes = it.readNBytes(262145)
+                    require(bytes.size <= 262144) {
+                        "Phản hồi Seller quá lớn."
+                    }
+                    JSONObject(String(bytes, Charsets.UTF_8))
+                }
+
+                val documents = json.getJSONArray("documents")
+                require(documents.length() <= 100) {
+                    "Danh sách tài liệu vượt giới hạn."
+                }
+
+                val items = mutableListOf<SellerDocumentItem>()
+
+                for (index in 0 until documents.length()) {
+                    val doc = documents.getJSONObject(index)
+                    val statusValue = doc.getString("status")
+
+                    // Drafts require a separate resume-draft screen.
+                    // Never display a draft as published or archived.
+                    val documentStatus = when (statusValue) {
+                        "PUBLISHED" -> SellerDocumentStatus.PUBLISHED
+                        "ARCHIVED" -> SellerDocumentStatus.ARCHIVED
+                        "DRAFT" -> null
+                        else -> throw IllegalStateException(
+                            "Trạng thái tài liệu không hợp lệ."
+                        )
+                    } ?: continue
+
+                    val versionId = doc.getString("versionId")
+                    require(versionId == "v1") {
+                        "Phiên bản tài liệu chưa được hỗ trợ."
+                    }
+
+                    val docId = doc.getString("docId")
+                    require(
+                        docId.matches(
+                            Regex("[a-zA-Z0-9_-]{1,150}")
+                        )
+                    ) {
+                        "Mã tài liệu không hợp lệ."
+                    }
+
+                    val priceVnd = doc.getInt("priceVnd")
+                    require(priceVnd >= 0) {
+                        "Giá tài liệu không hợp lệ."
+                    }
+
+                    val createdAt = doc.optString("createdAt")
+                        .takeIf { it.length >= 10 }
+                        ?.take(10)
+                        ?: "Chưa có ngày"
+
+                    items.add(
+                        SellerDocumentItem(
+                            docId = docId,
+                            version = 1,
+                            title = doc.getString("title"),
+                            category = doc.optString("category"),
+                            subject = doc.optString("subject"),
+                            school = "",
+                            priceVnd = priceVnd,
+                            description = doc.optString("description"),
+                            viewCount = 0,
+                            reviewCount = 0,
+                            publishedDateLabel = createdAt,
+                            status = documentStatus
+                        )
+                    )
+                }
+
+                items
+            } finally {
+                connection.disconnect()
+            }
+        }
+
+        check(auth.currentUser?.uid == user.uid) {
+            "Tài khoản đã thay đổi trong lúc tải dữ liệu."
+        }
+
+        result
     }
 
     override suspend fun updateDocumentMetadata(
@@ -265,24 +393,122 @@ class A04SellerRepositoryAdapter(
     ): Result<SellerDocumentItem> = attempt {
 
         require(expectedVersion == 1) {
-            "Phiên bản tài liệu không khớp."
+            "Phiên bản tài liệu chưa được hỗ trợ."
         }
 
-        val draft = drafts[docId]
+        require(docId.matches(Regex("[a-zA-Z0-9_-]{1,150}"))) {
+            "Mã tài liệu không hợp lệ."
+        }
+
+        val user = auth.currentUser
+            ?: throw IllegalStateException("Vui lòng đăng nhập.")
+
+        // Resolve the document before mutation, so a successful archive
+        // is not mistaken for a failure caused by a subsequent GET.
+        val existing = fetchSellerDocuments()
+            .getOrThrow()
+            .firstOrNull { it.docId == docId }
             ?: throw IllegalStateException(
-                "Không có phiên Draft để Archive."
+                "Không tìm thấy tài liệu trong danh sách Seller."
             )
 
-        val existing = publishedDocuments[docId]
+        require(existing.status == SellerDocumentStatus.PUBLISHED) {
+            "Chỉ tài liệu đã xuất bản mới được lưu trữ."
+        }
+
+        val token = user.getIdToken(false).await().token
             ?: throw IllegalStateException(
-                "Tài liệu chưa được Publish trong phiên này."
+                "Không thể xác thực tài khoản."
             )
 
-        a04.archive(draft)
+        val archived = withContext(Dispatchers.IO) {
+            val connection = URL(
+                "$apiBaseUrl/v1/documents/$docId"
+            ).openConnection() as HttpURLConnection
 
-        val archived = existing.copy(
-            status = SellerDocumentStatus.ARCHIVED
-        )
+            try {
+                connection.requestMethod = "PATCH"
+                connection.connectTimeout = 15000
+                connection.readTimeout = 20000
+                connection.instanceFollowRedirects = false
+                connection.doOutput = true
+
+                connection.setRequestProperty(
+                    "Authorization",
+                    "Bearer $token"
+                )
+                connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json; charset=utf-8"
+                )
+                connection.setRequestProperty(
+                    "Accept",
+                    "application/json"
+                )
+
+                val body = JSONObject()
+                    .put("action", "archive")
+                    .put("expectedVersionId", "v1")
+                    .toString()
+
+                connection.outputStream.use {
+                    it.write(body.toByteArray(Charsets.UTF_8))
+                }
+
+                when (val status = connection.responseCode) {
+                    200 -> {
+                        val bytes = connection.inputStream.use {
+                            it.readNBytes(8193)
+                        }
+
+                        require(bytes.size <= 8192) {
+                            "Phản hồi lưu trữ quá lớn."
+                        }
+
+                        val json = JSONObject(
+                            String(bytes, Charsets.UTF_8)
+                        )
+
+                        check(
+                            json.optString("docId") == docId &&
+                            json.optString("status") == "ARCHIVED"
+                        ) {
+                            "Phản hồi lưu trữ không hợp lệ."
+                        }
+
+                        existing.copy(
+                            status = SellerDocumentStatus.ARCHIVED
+                        )
+                    }
+
+                    401 -> throw IllegalStateException(
+                        "Phiên đăng nhập không hợp lệ."
+                    )
+
+                    403 -> throw IllegalStateException(
+                        "Không có quyền lưu trữ tài liệu."
+                    )
+
+                    404 -> throw IllegalStateException(
+                        "Không tìm thấy tài liệu."
+                    )
+
+                    409 -> throw IllegalStateException(
+                        "Phiên bản đã thay đổi. Hãy làm mới danh sách."
+                    )
+
+                    else -> throw IllegalStateException(
+                        "Lưu trữ thất bại (HTTP $status)."
+                    )
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+
+        check(auth.currentUser?.uid == user.uid) {
+            "Phiên đăng nhập đã thay đổi."
+        }
 
         publishedDocuments[docId] = archived
         archived

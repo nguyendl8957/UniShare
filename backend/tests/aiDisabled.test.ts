@@ -46,6 +46,7 @@ test("A08 AI disabled by default", async (t) => {
 
   const previousFlag = process.env.UNISHARE_AI_ENABLED;
   const previousKey = process.env.GEMINI_API_KEY;
+  const previousAllowlist = process.env.UNISHARE_AI_TEST_UIDS;
 
   try {
     await versionRef.set({
@@ -89,6 +90,15 @@ test("A08 AI disabled by default", async (t) => {
       assert.equal(res.status, 503, JSON.stringify(res.body));
       assert.equal(res.body.answer, undefined);
     });
+    await t.test("503 when enabled but UID is not allowlisted", async () => {
+      process.env.UNISHARE_AI_ENABLED = "true";
+      process.env.UNISHARE_AI_TEST_UIDS = "another_test_uid";
+
+      const res = await ask();
+
+      assert.equal(res.status, 503, JSON.stringify(res.body));
+      assert.equal(res.body.answer, undefined);
+    });
   } finally {
     if (previousFlag === undefined) {
       delete process.env.UNISHARE_AI_ENABLED;
@@ -102,6 +112,11 @@ test("A08 AI disabled by default", async (t) => {
       process.env.GEMINI_API_KEY = previousKey;
     }
 
+    if (previousAllowlist === undefined) {
+      delete process.env.UNISHARE_AI_TEST_UIDS;
+    } else {
+      process.env.UNISHARE_AI_TEST_UIDS = previousAllowlist;
+    }
     await Promise.all([
       entitlementRef.delete(),
       versionRef.delete()

@@ -11,6 +11,8 @@ import { orderRoutes } from "./orders/orderRoutes";
 import { libraryRouter } from "./documents/library";
 import { webhookRouter } from "./payments/webhookRoute";
 import { aiChatRouter } from "./ai/chatRoute";
+import { sellerEnrollmentRouter } from "./seller/enrollment";
+import { sellerDocumentsRouter } from "./seller/documents";
 
 export const app = express();
 
@@ -38,6 +40,8 @@ app.use("/v1/documents", contentRouter);
 app.use("/v1/orders", orderRoutes);
 app.use("/v1/me", libraryRouter);
 app.use("/v1/ai", aiChatRouter);
+app.use("/v1/seller", sellerEnrollmentRouter);
+app.use("/v1/seller", sellerDocumentsRouter);
 
 app.use((_req, res) => {
   sendApiError(res, 404, "NOT_FOUND", "Route not found");
