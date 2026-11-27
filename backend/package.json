@@ -22,7 +22,8 @@
     "firebase-admin": "^14.5.1",
     "firebase-functions": "^7.4.0",
     "pdf-lib": "^1.17.1",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "unpdf": "2.2.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
