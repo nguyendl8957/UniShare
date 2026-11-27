@@ -96,8 +96,37 @@ class FakeSellerRevenueRepository(
 
     private val allOrders = mutableListOf<InternalOrder>()
 
+    var lastRevenueFrom: String? = null
+        private set
+    var lastRevenueTo: String? = null
+        private set
+
     init {
         resetFixture()
+    }
+
+    fun addTestOrder(
+        orderId: String,
+        sellerId: String,
+        docId: String,
+        documentTitle: String,
+        amountVnd: Long,
+        status: OrderStatus,
+        paymentCode: String,
+        paidAtUtc: String
+    ) {
+        allOrders.add(
+            InternalOrder(
+                orderId = orderId,
+                sellerId = sellerId,
+                docId = docId,
+                documentTitle = documentTitle,
+                amountVnd = amountVnd,
+                status = status,
+                paymentCode = paymentCode,
+                paidAtUtc = paidAtUtc
+            )
+        )
     }
 
     fun resetFixture() {
@@ -195,28 +224,39 @@ class FakeSellerRevenueRepository(
     }
 
     override suspend fun getRevenueSummary(from: String?, to: String?): Result<SellerRevenueSummaryDto> {
+        lastRevenueFrom = from
+        lastRevenueTo = to
         if (simulateOffline) {
             return Result.failure(IOException("Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng."))
         }
         val currentSellerId = activeUid ?: return Result.success(SellerRevenueSummaryDto(0L, 0, 0))
 
-        // Lọc danh sách chỉ thuộc Seller hiện tại, có trạng thái PAID và nằm trong khoảng thời gian [from, to]
+        val zoneVn = ZoneId.of("Asia/Ho_Chi_Minh")
+        val fromInstant = from?.let { LocalDate.parse(it).atStartOfDay(zoneVn).toInstant() }
+        val toInstant = to?.let { LocalDate.parse(it).atStartOfDay(zoneVn).toInstant() }
+
+        // Lọc danh sách chỉ thuộc Seller hiện tại, trạng thái PAID, trong khoảng [from, to) giờ VN
         val paidOrders = allOrders.filter { order ->
-            order.sellerId == currentSellerId &&
-                order.status == OrderStatus.PAID &&
-                (from == null || order.paidAtUtc >= from) &&
-                (to == null || order.paidAtUtc <= to)
+            if (order.sellerId != currentSellerId || order.status != OrderStatus.PAID) {
+                return@filter false
+            }
+            val paidInstant = runCatching { Instant.parse(order.paidAtUtc) }.getOrNull()
+                ?: return@filter false
+            val afterOrAtFrom = fromInstant == null || !paidInstant.isBefore(fromInstant)
+            val strictlyBeforeTo = toInstant == null || paidInstant.isBefore(toInstant)
+            afterOrAtFrom && strictlyBeforeTo
         }
 
         val totalAmount = paidOrders.sumOf { it.amountVnd }
         val orderCount = paidOrders.size
-        val uniqueDocs = paidOrders.map { it.docId }.distinct().size
+        // Theo phản hồi của Leader: tạm định nghĩa totalDocumentsSold là số lượt bán thành công
+        val documentsSoldCount = paidOrders.size
 
         return Result.success(
             SellerRevenueSummaryDto(
                 totalRevenueVnd = totalAmount,
                 paidOrderCount = orderCount,
-                totalDocumentsSold = uniqueDocs
+                totalDocumentsSold = documentsSoldCount
             )
         )
     }
@@ -290,6 +330,7 @@ class SellerRevenueViewModel(
     val uiState: StateFlow<SellerRevenueUiState> = _uiState.asStateFlow()
 
     private var activeLoadJob: Job? = null
+    private var loadMoreJob: Job? = null
     private var loadSequence: Long = 0L
 
     init {
@@ -309,6 +350,8 @@ class SellerRevenueViewModel(
 
             is AuthSession.Guest -> {
                 activeLoadJob?.cancel()
+                loadMoreJob?.cancel()
+                loadSequence++
                 _uiState.update {
                     it.copy(
                         isRestoringSession = false,
@@ -322,6 +365,9 @@ class SellerRevenueViewModel(
             is AuthSession.SignedIn -> {
                 val previousUid = _uiState.value.activeUid
                 if (previousUid != session.uid) {
+                    activeLoadJob?.cancel()
+                    loadMoreJob?.cancel()
+                    loadSequence++
                     // Xóa sạch toàn bộ số liệu của Seller cũ lập tức để không bị rò rỉ dữ liệu chéo
                     _uiState.update {
                         SellerRevenueUiState(
@@ -341,6 +387,7 @@ class SellerRevenueViewModel(
      */
     fun loadDashboardData(isRefresh: Boolean = false) {
         activeLoadJob?.cancel()
+        loadMoreJob?.cancel()
         val currentSeq = ++loadSequence
 
         activeLoadJob = viewModelScope.launch(mainDispatcher) {
@@ -372,10 +419,11 @@ class SellerRevenueViewModel(
                 }
                 return@launch
             }
+            _uiState.update { it.copy(isSellerRole = true) }
 
-            // 2. Tải tổng hợp doanh thu (KPI) theo khoảng ngày được chọn
-            val (fromUtc, toUtc) = calculateDateRangeUtc(_uiState.value.selectedFilter)
-            val revenueResult = revenueRepository.getRevenueSummary(from = fromUtc, to = toUtc)
+            // 2. Tải tổng hợp doanh thu (KPI) theo khoảng ngày YYYY-MM-DD [from, to) giờ Việt Nam
+            val (fromDate, toDate) = calculateVnDateRange(_uiState.value.selectedFilter)
+            val revenueResult = revenueRepository.getRevenueSummary(from = fromDate, to = toDate)
             if (currentSeq != loadSequence) return@launch
 
             revenueResult.onSuccess { summary ->
@@ -457,11 +505,19 @@ class SellerRevenueViewModel(
         }
 
         val currentItems = (currentState.listState as? SellerRevenueListState.Content)?.items ?: return
+        val expectedSeq = loadSequence
+        val expectedUid = currentState.activeUid
 
-        viewModelScope.launch(mainDispatcher) {
+        loadMoreJob?.cancel()
+        loadMoreJob = viewModelScope.launch(mainDispatcher) {
             _uiState.update { it.copy(isLoadingMore = true, loadMoreError = null) }
 
-            revenueRepository.getSales(cursor = cursor).onSuccess { page ->
+            val result = revenueRepository.getSales(cursor = cursor)
+            if (expectedSeq != loadSequence || _uiState.value.activeUid != expectedUid) {
+                return@launch
+            }
+
+            result.onSuccess { page ->
                 // Khử trùng lặp theo orderId để đảm bảo tính đúng đắn khi mạng chập chờn
                 val combined = (currentItems + page.items).distinctBy { it.orderId }
 
@@ -493,28 +549,24 @@ class SellerRevenueViewModel(
         loadDashboardData(isRefresh = true)
     }
 
-    private fun calculateDateRangeUtc(filter: RevenueDateRangeFilter): Pair<String?, String?> {
+    /**
+     * Tính toán khoảng ngày lọc theo định dạng YYYY-MM-DD (múi giờ Việt Nam Asia/Ho_Chi_Minh),
+     * tuân thủ quy ước nửa mở [from, to) của Backend.
+     */
+    private fun calculateVnDateRange(filter: RevenueDateRangeFilter): Pair<String?, String?> {
         val zoneVn = ZoneId.of("Asia/Ho_Chi_Minh")
-        val now = Instant.now()
-        val todayVn = now.atZone(zoneVn).toLocalDate()
+        val todayVn = LocalDate.now(zoneVn)
+        val tomorrowVn = todayVn.plusDays(1)
 
         return when (filter) {
             RevenueDateRangeFilter.ALL_TIME -> null to null
-            RevenueDateRangeFilter.TODAY -> {
-                val startOfDay = todayVn.atStartOfDay(zoneVn).toInstant().toString()
-                startOfDay to now.toString()
-            }
-            RevenueDateRangeFilter.LAST_7_DAYS -> {
-                val sevenDaysAgo = now.minusSeconds(86400 * 7).toString()
-                sevenDaysAgo to now.toString()
-            }
-            RevenueDateRangeFilter.LAST_30_DAYS -> {
-                val thirtyDaysAgo = now.minusSeconds(86400 * 30).toString()
-                thirtyDaysAgo to now.toString()
-            }
+            RevenueDateRangeFilter.TODAY -> todayVn.toString() to tomorrowVn.toString()
+            RevenueDateRangeFilter.LAST_7_DAYS -> todayVn.minusDays(6).toString() to tomorrowVn.toString()
+            RevenueDateRangeFilter.LAST_30_DAYS -> todayVn.minusDays(29).toString() to tomorrowVn.toString()
             RevenueDateRangeFilter.THIS_MONTH -> {
-                val firstDayOfMonth = todayVn.withDayOfMonth(1).atStartOfDay(zoneVn).toInstant().toString()
-                firstDayOfMonth to now.toString()
+                val firstDayOfMonth = todayVn.withDayOfMonth(1)
+                val firstDayOfNextMonth = firstDayOfMonth.plusMonths(1)
+                firstDayOfMonth.toString() to firstDayOfNextMonth.toString()
             }
         }
     }

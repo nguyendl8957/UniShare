@@ -177,11 +177,12 @@ fun SellerRevenueScreenContent(
                     UiFeedback(state = UiFeedbackState.Skeleton)
                 }
 
-                // 6. Hiển thị nội dung chính hoặc danh sách trống
+                // 6. Hiển thị nội dung chính hoặc danh sách trống / lỗi cục bộ
                 else -> {
                     RevenueContentList(
                         uiState = uiState,
                         onFilterSelected = onFilterSelected,
+                        onRefresh = onRefresh,
                         onLoadMore = onLoadMore,
                         onRetryLoadMore = onRetryLoadMore
                     )
@@ -195,6 +196,7 @@ fun SellerRevenueScreenContent(
 private fun RevenueContentList(
     uiState: SellerRevenueUiState,
     onFilterSelected: (RevenueDateRangeFilter) -> Unit,
+    onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
     modifier: Modifier = Modifier
@@ -209,6 +211,17 @@ private fun RevenueContentList(
         // 1. Thẻ chỉ số tổng quan (KPI Card)
         item(key = "kpi_card") {
             SellerRevenueKpiCard(kpi = uiState.kpiState)
+        }
+
+        // Cảnh báo nếu tải KPI lỗi nhưng danh sách vẫn hiển thị
+        if (uiState.kpiError != null) {
+            item(key = "kpi_error_banner") {
+                InlineErrorCard(
+                    message = uiState.kpiError,
+                    onRetry = onRefresh,
+                    tag = "kpi_error_view"
+                )
+            }
         }
 
         // 2. Bộ lọc khoảng thời gian (Date Range Filter Chips)
@@ -249,6 +262,16 @@ private fun RevenueContentList(
             is SellerRevenueListState.Empty -> {
                 item(key = "empty_view") {
                     EmptySalesView(modifier = Modifier.padding(vertical = 24.dp))
+                }
+            }
+
+            is SellerRevenueListState.Error -> {
+                item(key = "list_error_view") {
+                    InlineErrorCard(
+                        message = listState.message,
+                        onRetry = onRefresh,
+                        tag = "list_error_view"
+                    )
                 }
             }
 
@@ -752,6 +775,42 @@ private fun DeniedNoticeView(
             onClick = onNavigateBack,
             modifier = Modifier.widthIn(max = 200.dp)
         )
+    }
+}
+
+@Composable
+private fun InlineErrorCard(
+    message: String,
+    onRetry: () -> Unit,
+    tag: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(tag)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = message,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            TextButton(onClick = onRetry) {
+                Text("Thử lại", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
     }
 }
 

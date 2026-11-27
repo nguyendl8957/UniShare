@@ -2,6 +2,9 @@ package vn.unishare.feature.revenue.ui
 
 import vn.unishare.feature.payment.ui.OrderStatus
 
+/** Route điều hướng chuẩn đã thống nhất với Leader cho màn hình Doanh thu Seller. */
+const val SELLER_REVENUE_ROUTE = "seller/revenue"
+
 /**
  * ============================================================================
  * ĐẶC TẢ TRẠNG THÁI GIAO DIỆN BẢNG DOANH THU & GIAO DỊCH SELLER (B06)

@@ -262,5 +262,68 @@ class SellerRevenueScreenTest {
         composeTestRule.onNodeWithTag("chip_filter_THIS_MONTH").performClick()
         assertEquals(RevenueDateRangeFilter.THIS_MONTH, selectedFilter)
     }
+
+    @Test
+    fun listError_withExistingKpi_displaysInlineErrorAndRetry() {
+        var refreshClicked = false
+
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.SELLER) {
+                SellerRevenueScreenContent(
+                    uiState = SellerRevenueUiState(
+                        isRestoringSession = false,
+                        isGuest = false,
+                        isSellerRole = true,
+                        activeUid = "uid_seller_test_01",
+                        kpiState = sampleKpi,
+                        listState = SellerRevenueListState.Error("Mất kết nối mạng")
+                    ),
+                    onNavigateBack = {},
+                    onLoginClick = {},
+                    onFilterSelected = {},
+                    onRefresh = { refreshClicked = true },
+                    onLoadMore = {},
+                    onRetryLoadMore = {}
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("list_error_view").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Mất kết nối mạng").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Thử lại").performClick()
+        assertTrue(refreshClicked)
+    }
+
+    @Test
+    fun loadMoreError_displaysFooterRetryButton() {
+        var retryLoadMoreClicked = false
+
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.SELLER) {
+                SellerRevenueScreenContent(
+                    uiState = SellerRevenueUiState(
+                        isRestoringSession = false,
+                        isGuest = false,
+                        isSellerRole = true,
+                        activeUid = "uid_seller_test_01",
+                        kpiState = sampleKpi,
+                        listState = SellerRevenueListState.Content(sampleItems),
+                        hasMore = true,
+                        loadMoreError = "Lỗi tải thêm trang"
+                    ),
+                    onNavigateBack = {},
+                    onLoginClick = {},
+                    onFilterSelected = {},
+                    onRefresh = {},
+                    onLoadMore = {},
+                    onRetryLoadMore = { retryLoadMoreClicked = true }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Lỗi tải thêm trang").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Thử lại").performClick()
+        assertTrue(retryLoadMoreClicked)
+    }
 }
 

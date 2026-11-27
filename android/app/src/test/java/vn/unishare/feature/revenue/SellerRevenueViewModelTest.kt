@@ -1,9 +1,11 @@
 package vn.unishare.feature.revenue
 
 import androidx.lifecycle.SavedStateHandle
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,10 +15,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import vn.unishare.domain.repository.AuthRepository
 import vn.unishare.domain.repository.AuthSession
+import vn.unishare.feature.payment.ui.OrderStatus
 import vn.unishare.feature.revenue.ui.FakeSellerRevenueRepository
 import vn.unishare.feature.revenue.ui.RevenueDateRangeFilter
 import vn.unishare.feature.revenue.ui.SellerRevenueListState
+import vn.unishare.feature.revenue.ui.SellerRevenueRepository
+import vn.unishare.feature.revenue.ui.SellerRevenueSummaryDto
 import vn.unishare.feature.revenue.ui.SellerRevenueViewModel
+import vn.unishare.feature.revenue.ui.SellerSalesPageDto
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * Fake AuthRepository kiểm soát phiên đăng nhập phục vụ kiểm thử đơn vị cho B06
@@ -275,6 +283,156 @@ class SellerRevenueViewModelTest {
         assertEquals(150_000L, state.kpiState.totalRevenueVnd)
         assertEquals(2, state.kpiState.paidOrderCount)
         assertEquals(2, state.kpiState.totalDocumentsSold)
+    }
+
+    @Test
+    fun selectFilter_today_usesVnDateRangeHalfOpen_and_respectsMidnightBoundaries() = runBlocking {
+        val zoneVn = ZoneId.of("Asia/Ho_Chi_Minh")
+        val todayVn = LocalDate.now(zoneVn)
+        val tomorrowVn = todayVn.plusDays(1)
+
+        val fakeRepo = FakeSellerRevenueRepository(activeUid = FakeSellerRevenueRepository.UID_SELLER_ONE)
+        // Thêm đơn ở đúng ranh giới 23:59:59 hôm qua (loại trừ) và 00:00:00 ngày mai (loại trừ vì [from, to))
+        fakeRepo.addTestOrder(
+            orderId = "ord_s1_yesterday_end",
+            sellerId = FakeSellerRevenueRepository.UID_SELLER_ONE,
+            docId = "doc_boundary_1",
+            documentTitle = "Đơn cuối ngày hôm qua",
+            amountVnd = 20_000L,
+            status = OrderStatus.PAID,
+            paymentCode = "UNIBND01",
+            paidAtUtc = todayVn.atStartOfDay(zoneVn).minusSeconds(1).toInstant().toString()
+        )
+        fakeRepo.addTestOrder(
+            orderId = "ord_s1_tomorrow_start",
+            sellerId = FakeSellerRevenueRepository.UID_SELLER_ONE,
+            docId = "doc_boundary_2",
+            documentTitle = "Đơn đầu ngày mai",
+            amountVnd = 40_000L,
+            status = OrderStatus.PAID,
+            paymentCode = "UNIBND02",
+            paidAtUtc = tomorrowVn.atStartOfDay(zoneVn).toInstant().toString()
+        )
+
+        val authRepo = RevenueTestFakeAuthRepository(AuthSession.SignedIn(FakeSellerRevenueRepository.UID_SELLER_ONE))
+        val viewModel = SellerRevenueViewModel(
+            authRepository = authRepo,
+            revenueRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        viewModel.selectFilter(RevenueDateRangeFilter.TODAY)
+
+        // Xác nhận định dạng YYYY-MM-DD và khoảng nửa mở [today, tomorrow)
+        assertEquals(todayVn.toString(), fakeRepo.lastRevenueFrom)
+        assertEquals(tomorrowVn.toString(), fakeRepo.lastRevenueTo)
+
+        // Chỉ tính đơn ord_s1_001 (50.000 đ) phát sinh trong ngày hôm nay
+        val state = viewModel.uiState.value
+        assertEquals(50_000L, state.kpiState.totalRevenueVnd)
+        assertEquals(1, state.kpiState.paidOrderCount)
+        assertEquals(1, state.kpiState.totalDocumentsSold)
+    }
+
+    @Test
+    fun totalDocumentsSold_countsSuccessfulSales_evenWhenSameDocumentSoldTwice() = runBlocking {
+        val fakeRepo = FakeSellerRevenueRepository(activeUid = FakeSellerRevenueRepository.UID_SELLER_ONE)
+        // Bán thêm 1 lượt nữa cho cùng tài liệu doc_dsa_01
+        fakeRepo.addTestOrder(
+            orderId = "ord_s1_repeat_doc",
+            sellerId = FakeSellerRevenueRepository.UID_SELLER_ONE,
+            docId = "doc_dsa_01",
+            documentTitle = "Giáo trình Cấu trúc dữ liệu & Giải thuật nâng cao",
+            amountVnd = 50_000L,
+            status = OrderStatus.PAID,
+            paymentCode = "UNIS1R01",
+            paidAtUtc = LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh")).atStartOfDay(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant().toString()
+        )
+
+        val authRepo = RevenueTestFakeAuthRepository(AuthSession.SignedIn(FakeSellerRevenueRepository.UID_SELLER_ONE))
+        val viewModel = SellerRevenueViewModel(
+            authRepository = authRepo,
+            revenueRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        val state = viewModel.uiState.value
+        // 3 đơn gốc + 1 đơn bán lại = 4 lượt bán thành công
+        assertEquals(275_000L, state.kpiState.totalRevenueVnd)
+        assertEquals(4, state.kpiState.paidOrderCount)
+        assertEquals(4, state.kpiState.totalDocumentsSold)
+    }
+
+    @Test
+    fun refresh_afterSellerRoleGranted_restoresIsSellerRoleTrue() = runBlocking {
+        val fakeRepo = FakeSellerRevenueRepository(
+            activeUid = FakeSellerRevenueRepository.UID_SELLER_ONE,
+            isSellerRole = false
+        )
+        val authRepo = RevenueTestFakeAuthRepository(AuthSession.SignedIn(FakeSellerRevenueRepository.UID_SELLER_ONE))
+
+        val viewModel = SellerRevenueViewModel(
+            authRepository = authRepo,
+            revenueRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        assertFalse(viewModel.uiState.value.isSellerRole)
+
+        // Tài khoản được cấp quyền Seller và bấm refresh
+        fakeRepo.isSellerRole = true
+        viewModel.refresh()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.isSellerRole)
+        assertTrue(state.listState is SellerRevenueListState.Content)
+        assertEquals(225_000L, state.kpiState.totalRevenueVnd)
+    }
+
+    @Test
+    fun loadMore_whenAccountSwitchesMidFlight_ignoresStalePageResult() = runBlocking {
+        val delegate = FakeSellerRevenueRepository(activeUid = FakeSellerRevenueRepository.UID_SELLER_ONE)
+        val page2Gate = CompletableDeferred<Unit>()
+        val gatedRepo = object : SellerRevenueRepository {
+            override suspend fun checkSellerRole(): Result<Boolean> = delegate.checkSellerRole()
+            override suspend fun getRevenueSummary(from: String?, to: String?): Result<SellerRevenueSummaryDto> =
+                delegate.getRevenueSummary(from, to)
+
+            override suspend fun getSales(cursor: String?, limit: Int): Result<SellerSalesPageDto> {
+                if (cursor == FakeSellerRevenueRepository.CURSOR_PAGE_2) {
+                    page2Gate.await()
+                }
+                return delegate.getSales(cursor, limit)
+            }
+        }
+
+        val authRepo = RevenueTestFakeAuthRepository(AuthSession.SignedIn(FakeSellerRevenueRepository.UID_SELLER_ONE))
+        val viewModel = SellerRevenueViewModel(
+            authRepository = authRepo,
+            revenueRepository = gatedRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        // Bắt đầu tải trang 2 cho Seller 1 (đang treo chờ page2Gate)
+        viewModel.loadMore()
+
+        // Đổi sang Seller 2 trước khi trang 2 của Seller 1 trả về
+        delegate.activeUid = FakeSellerRevenueRepository.UID_SELLER_TWO
+        authRepo.switchSession(AuthSession.SignedIn(FakeSellerRevenueRepository.UID_SELLER_TWO))
+
+        // Mở khóa trang 2 cũ của Seller 1
+        page2Gate.complete(Unit)
+
+        val state = viewModel.uiState.value
+        assertEquals(FakeSellerRevenueRepository.UID_SELLER_TWO, state.activeUid)
+        val content = state.listState as SellerRevenueListState.Content
+        // Tuyệt đối không bị trộn dữ liệu Seller 1 vào Seller 2
+        assertEquals(1, content.items.size)
+        assertEquals("ord_s2_001", content.items[0].orderId)
     }
 }
 
