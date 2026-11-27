@@ -47,18 +47,53 @@ import vn.unishare.feature.payment.ui.CheckoutScreen
 import vn.unishare.feature.payment.ui.CheckoutViewModel
 import vn.unishare.feature.ai.ui.AiChatScreen
 import vn.unishare.feature.ai.ui.AiChatViewModel
-import vn.unishare.feature.ai.ui.FakeDocumentAiRepository
+import vn.unishare.feature.ai.ui.HttpDocumentAiRepository
 import vn.unishare.feature.explore.ui.ExploreScreen
 import vn.unishare.feature.explore.ui.ExploreViewModel
+import vn.unishare.feature.explore.ui.FirestoreExploreCatalogRepository
 import vn.unishare.feature.explore.ui.DocumentDetailScreen
+import vn.unishare.feature.profile.ui.ProfileScreen
+import vn.unishare.feature.profile.ui.ProfileViewModel
+import vn.unishare.feature.profile.ui.BuyerProfileRoleContract
 
 private const val DEBUG_TEST_DOCUMENT = "draft_077e668cc1703bb4b3b8cd9c85ff9c8f704e282a102fa088ebe3538c033884d8"
 
 @Composable
 fun AppNavHost(container: AppContainer) {
     val navController = rememberNavController()
+
+    // Single navigation entry point for the four Buyer tabs.
+    // "home" temporarily uses Explore until a real Home exists.
+    fun navigateMainTab(route: String) {
+        val destination = when (route) {
+            "home", "explore" -> "explore"
+            "purchased", "library" -> "purchased"
+            "profile" -> "profile"
+            else -> return
+        }
+
+        if (navController.currentDestination?.route == destination) {
+            return
+        }
+
+        navController.navigate(destination) {
+            popUpTo("explore") {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
     // C07 UI integration: uses sample catalog data for now.
-    val exploreViewModel: ExploreViewModel = viewModel()
+    val exploreViewModel: ExploreViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer {
+                ExploreViewModel(
+                    catalogRepository = FirestoreExploreCatalogRepository()
+                )
+            }
+        }
+    )
     val logoutScope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -111,13 +146,10 @@ fun AppNavHost(container: AppContainer) {
                 onDocumentClick = { docId ->
                     navController.navigate("document/$docId")
                 },
-                onBottomNavSelected = { route ->
-                    when (route) {
-                        "home", "explore" -> Unit
-                        "purchased", "library" ->
-                            navController.navigate("purchased")
-                    }
-                }
+                onProfileIconClick = {
+                    navController.navigate("profile")
+                },
+                onBottomNavSelected = { route -> navigateMainTab(route) }
             )
         }
 
@@ -147,14 +179,32 @@ fun AppNavHost(container: AppContainer) {
                 onSellerClick = {
                     // Seller public profile navigation comes later.
                 },
-                onBottomNavSelected = { route ->
-                    when (route) {
-                        "home", "explore" ->
-                            navController.navigate("explore")
-                        "purchased", "library" ->
-                            navController.navigate("purchased")
+                onBottomNavSelected = { route -> navigateMainTab(route) }
+            )
+        }
+        composable("profile") { entry ->
+            val profileViewModel: ProfileViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        ProfileViewModel(
+                            authRepository = container.authRepository,
+                            profileRepository = container.profileRepository,
+                            sellerRoleContract = BuyerProfileRoleContract()
+                        )
                     }
                 }
+            )
+
+            ProfileScreen(
+                viewModel = profileViewModel,
+                onLoginClick = {
+                    navController.navigate("auth")
+                },
+                onOpenPurchasedLibrary = {
+                    navController.navigate("purchased")
+                },
+                onBottomNavSelected = { route -> navigateMainTab(route) }
             )
         }
         composable("home") {
@@ -239,20 +289,14 @@ fun AppNavHost(container: AppContainer) {
                     navController.navigate("reader/$docId")
                 },
                 onExploreClick = {
-                    navController.navigate("home") {
-                        popUpTo("home") { inclusive = false }
+                    navController.navigate("explore") {
+                        popUpTo("explore") { inclusive = false }
                     }
                 },
                 onLoginClick = {
                     navController.navigate("auth")
                 },
-                onBottomNavSelected = { route ->
-                    if (route == "home") {
-                        navController.navigate("home") {
-                            popUpTo("home") { inclusive = false }
-                        }
-                    }
-                }
+                onBottomNavSelected = { route -> navigateMainTab(route) }
             )
             }
         }
@@ -372,7 +416,10 @@ fun AppNavHost(container: AppContainer) {
                     initializer {
                         AiChatViewModel(
                             authRepository = container.authRepository,
-                            aiRepository = FakeDocumentAiRepository()
+                            aiRepository = HttpDocumentAiRepository(
+                                auth = firebaseAuth,
+                                apiBaseUrl = c06ApiUrl
+                            )
                         )
                     }
                 }
