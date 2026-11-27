@@ -45,12 +45,60 @@ import vn.unishare.feature.auth.ui.AuthScreen
 import vn.unishare.feature.auth.ui.AuthViewModel
 import vn.unishare.feature.payment.ui.CheckoutScreen
 import vn.unishare.feature.payment.ui.CheckoutViewModel
+import vn.unishare.feature.ai.ui.AiChatScreen
+import vn.unishare.feature.ai.ui.AiChatViewModel
+import vn.unishare.feature.ai.ui.HttpDocumentAiRepository
+import vn.unishare.feature.explore.ui.ExploreScreen
+import vn.unishare.feature.explore.ui.ExploreViewModel
+import vn.unishare.feature.explore.ui.FirestoreExploreCatalogRepository
+import vn.unishare.feature.explore.ui.DocumentDetailScreen
+import vn.unishare.feature.profile.ui.ProfileScreen
+import vn.unishare.feature.profile.ui.ProfileViewModel
+import vn.unishare.feature.profile.ui.BuyerProfileRoleContract
+import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.navigationBarsPadding
+import vn.unishare.core.ui.components.UniBottomBar
+import vn.unishare.core.ui.theme.UniAppMode
+import android.widget.Toast
 
 private const val DEBUG_TEST_DOCUMENT = "draft_077e668cc1703bb4b3b8cd9c85ff9c8f704e282a102fa088ebe3538c033884d8"
 
 @Composable
 fun AppNavHost(container: AppContainer) {
     val navController = rememberNavController()
+
+    // Centralized navigation for the four Buyer tabs.
+    fun navigateMainTab(route: String) {
+        val destination = when (route) {
+            "home" -> "home"
+            "explore" -> "explore"
+            "purchased", "library" -> "purchased"
+            "profile" -> "profile"
+            else -> return
+        }
+
+        if (navController.currentDestination?.route == destination) {
+            return
+        }
+
+        navController.navigate(destination) {
+            popUpTo("home") {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+    // C07 UI integration: uses sample catalog data for now.
+    val exploreViewModel: ExploreViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer {
+                ExploreViewModel(
+                    catalogRepository = FirestoreExploreCatalogRepository()
+                )
+            }
+        }
+    )
     val logoutScope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -96,75 +144,86 @@ fun AppNavHost(container: AppContainer) {
         navController = navController,
         startDestination = "home"
     ) {
-        composable("home") {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = container.appName,
-                    style = MaterialTheme.typography.headlineMedium
-                )
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(onClick = {
-                    navController.navigate("second")
-                }) {
-                    Text("Đi tới màn hình 2")
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(onClick = {
-                    navController.navigate("purchased")
-                }) {
-                    Text("Thư viện Đã mua")
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Button(onClick = {
-                    navController.navigate("auth")
-                }) {
-                    Text("Đăng nhập UniShare")
-                }
-                if (allowEmulatorCheckout) {
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Button(onClick = {
-                        logoutScope.launch {
-                            val result = container.authRepository.signOut()
-
-                            if (result.isSuccess) {
-                                navController.navigate("purchased") {
-                                    popUpTo("home") {
-                                        inclusive = false
-                                    }
-                                }
-                            }
-                        }
-                    }) {
-                        Text("Đăng xuất (Debug)")
-                    }
-                }
-                if (allowCheckout) {
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(onClick = {
-                        navController.navigate(
-                            "checkout/$DEBUG_TEST_DOCUMENT"
-                        )
-                    }) {
-                        Text("Kiểm thử Checkout B04")
-                    }
-                }
-            }
+        composable("explore") {
+            ExploreScreen(
+                viewModel = exploreViewModel,
+                onDocumentClick = { docId ->
+                    navController.navigate("document/$docId")
+                },
+                onProfileIconClick = {
+                    navController.navigate("profile")
+                },
+                onBottomNavSelected = { route -> navigateMainTab(route) }
+            )
         }
 
+        composable(
+            route = "document/{docId}",
+            arguments = listOf(
+                navArgument("docId") {
+                    type = NavType.StringType
+                }
+            )
+        ) { entry ->
+            val docId = entry.arguments
+                ?.getString("docId")
+                .orEmpty()
+
+            DocumentDetailScreen(
+                docId = docId,
+                viewModel = exploreViewModel,
+                onBackClick = {
+                    navController.popBackStack()
+                },
+                onBuyClick = { targetId ->
+                    if (allowCheckout) {
+                        navController.navigate("checkout/$targetId")
+                    }
+                },
+                onSellerClick = {
+                    Toast.makeText(
+                        context,
+                        "Hồ sơ người bán chưa được cập nhật.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                onBottomNavSelected = { route -> navigateMainTab(route) }
+            )
+        }
+        composable("profile") { entry ->
+            val profileViewModel: ProfileViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        ProfileViewModel(
+                            authRepository = container.authRepository,
+                            profileRepository = container.profileRepository,
+                            sellerRoleContract = BuyerProfileRoleContract()
+                        )
+                    }
+                }
+            )
+
+            ProfileScreen(
+                viewModel = profileViewModel,
+                onLoginClick = {
+                    navController.navigate("auth")
+                },
+                onOpenPurchasedLibrary = {
+                    navController.navigate("purchased")
+                },
+                onBottomNavSelected = { route -> navigateMainTab(route) }
+            )
+        }
+        composable("home") {
+            UniShareBuyerHome(
+                onExploreClick = { navigateMainTab("explore") },
+                onPurchasedClick = { navigateMainTab("purchased") },
+                onProfileClick = { navigateMainTab("profile") },
+                onBottomNavSelected = { route -> navigateMainTab(route) }
+            )
+        }
         // C06 is enabled only for local Emulator testing
         // until a production backend has been configured.
         if (libraryViewModel != null) {
@@ -178,20 +237,14 @@ fun AppNavHost(container: AppContainer) {
                     navController.navigate("reader/$docId")
                 },
                 onExploreClick = {
-                    navController.navigate("home") {
-                        popUpTo("home") { inclusive = false }
+                    navController.navigate("explore") {
+                        popUpTo("explore") { inclusive = false }
                     }
                 },
                 onLoginClick = {
                     navController.navigate("auth")
                 },
-                onBottomNavSelected = { route ->
-                    if (route == "home") {
-                        navController.navigate("home") {
-                            popUpTo("home") { inclusive = false }
-                        }
-                    }
-                }
+                onBottomNavSelected = { route -> navigateMainTab(route) }
             )
             }
         }
@@ -239,15 +292,13 @@ fun AppNavHost(container: AppContainer) {
                     navController.popBackStack()
                 },
                 onAskAiClick = {
-                    // C07 will implement real AI navigation.
+                    navController.navigate("ai-chat/$docId")
                 },
                 onRequireLoginClick = {
                     navController.navigate("auth")
                 },
                 onBottomNavSelected = { route ->
-                    if (route == "purchased") {
-                        navController.popBackStack()
-                    }
+                    navigateMainTab(route)
                 }
             )
             }
@@ -284,8 +335,8 @@ fun AppNavHost(container: AppContainer) {
             AuthScreen(
                 viewModel = authViewModel,
                 onNavigateToTarget = {
-                    navController.navigate("purchased") {
-                        popUpTo("auth") { inclusive = true }
+                    if (!navController.popBackStack()) {
+                        navigateMainTab("explore")
                     }
                 },
                 onAuthCanceled = {
@@ -293,14 +344,51 @@ fun AppNavHost(container: AppContainer) {
                 }
             )
         }
-        composable("second") {
-            DemoScreen(
-                title = "Màn hình thử nghiệm 2",
-                buttonText = "Quay lại",
-                onClick = { navController.popBackStack() }
+        composable(
+            route = "ai-chat/{docId}",
+            arguments = listOf(
+                navArgument("docId") {
+                    type = NavType.StringType
+                }
+            )
+        ) { entry ->
+            val docId = entry.arguments
+                ?.getString("docId")
+                .orEmpty()
+
+            val aiViewModel: AiChatViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        AiChatViewModel(
+                            authRepository = container.authRepository,
+                            aiRepository = HttpDocumentAiRepository(
+                                auth = firebaseAuth,
+                                apiBaseUrl = c06ApiUrl
+                            )
+                        )
+                    }
+                }
+            )
+
+            AiChatScreen(
+                docId = docId,
+                documentTitle = "Tài liệu UniShare",
+                viewModel = aiViewModel,
+                onBackClick = {
+                    navController.popBackStack()
+                },
+                onCitationClick = { _, _ ->
+                    navController.popBackStack()
+                },
+                onLoginClick = {
+                    navController.navigate("auth")
+                },
+                onBottomNavSelected = { route ->
+                    navigateMainTab(route)
+                }
             )
         }
-
         composable(
             route = "checkout/{docId}",
             arguments = listOf(
@@ -353,27 +441,59 @@ fun AppNavHost(container: AppContainer) {
 }
 
 @Composable
-private fun DemoScreen(
-    title: String,
-    buttonText: String,
-    onClick: () -> Unit
+private fun UniShareBuyerHome(
+    onExploreClick: () -> Unit,
+    onPurchasedClick: () -> Unit,
+    onProfileClick: () -> Unit,
+    onBottomNavSelected: (String) -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineMedium
-        )
+    Scaffold(
+        bottomBar = {
+            UniBottomBar(
+                selectedRoute = "home",
+                onItemSelected = onBottomNavSelected,
+                mode = UniAppMode.BUYER,
+                modifier = Modifier.navigationBarsPadding()
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "UniShare",
+                style = MaterialTheme.typography.headlineLarge
+            )
 
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-        Button(onClick = onClick) {
-            Text(buttonText)
+            Text(
+                text = "Nền tảng chia sẻ tài liệu học tập.",
+                style = MaterialTheme.typography.bodyLarge
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(onClick = onExploreClick) {
+                Text("Khám phá tài liệu")
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(onClick = onPurchasedClick) {
+                Text("Thư viện đã mua")
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(onClick = onProfileClick) {
+                Text("Hồ sơ cá nhân")
+            }
         }
     }
 }
