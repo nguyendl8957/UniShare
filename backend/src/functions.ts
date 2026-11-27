@@ -15,7 +15,7 @@ export const api = onRequest(
         maxInstances: 2,
         timeoutSeconds: 60,
         serviceAccount: "unishare-backend@unishare-db44a.iam.gserviceaccount.com",
-        secrets: ["SEPAY_WEBHOOK_SECRET"]
+        secrets: ["SEPAY_WEBHOOK_SECRET", "GEMINI_API_KEY"]
     },
     app
 );
