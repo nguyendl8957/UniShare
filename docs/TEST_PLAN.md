@@ -37,9 +37,11 @@ Nghiệm thu toàn diện giai đoạn **G4** trên bản build **APK Debug ch�
 | **P04** | **Idempotency & Concurrency** | Chống xử lý trùng lặp và xung đột khi nhận nhiều webhook đồng thời | Emulator | Đơn hàng `ord_race` đang `PENDING`. | Gửi đồng thời 2 webhook giống hệt nhau (cùng `txnId`, `paymentCode`, `amountVnd`). | Một request trả về `MATCHED`, một trả về `DUPLICATE`. Đơn chỉ đổi sang `PAID` 1 lần, chỉ có đúng 1 `entitlement`. | PASS (Emulator) |
 | **P05** | **Expired Order Payment** | Đối soát khi giao dịch phát sinh sau khi đơn hàng đã hết hạn TTL 15 phút | Emulator | Đơn hàng `ord_expired` có `expiresAt < now`. | Gửi webhook chuyển khoản đúng số tiền và mã của đơn hàng đã quá hạn. | Trả về 200, đưa vào `reconciliation` với lý do `ORDER_EXPIRED`. Đơn không đổi sang `PAID`, không cấp quyền. | PASS (Emulator) |
 | **P06** | **Atomic Commit & Transient Error** | Đảm bảo tính nguyên tử, không ghi nhận dở dang khi database bị lỗi | Emulator | Đơn hàng hợp lệ đang `PENDING`. | Mô phỏng ngắt kết nối Firestore trong quá trình xử lý transaction. | Trả về HTTP 503 (`PAYMENT_PERSISTENCE_UNAVAILABLE`) để SePay retry. Không có dữ liệu ghi dở dang. | PASS (Emulator) |
-| **E03** | **Real-money Android Checkout** | Kiểm thử tạo đơn và hiển thị thông tin chuyển khoản trên thiết bị Android thật | Máy thật | Bản build APK Debug cài trên máy thật kết nối Backend thử nghiệm. | 1. Mở màn hình Chi tiết tài liệu.<br/>2. Bấm "Mua tài liệu" $\rightarrow$ mở màn hình Checkout. | Hiển thị chính xác STK, Tên ngân hàng, Chủ TK, Số tiền và `paymentCode`. Đếm ngược 15 phút hoạt động. | CHỜ CHẠY |
-| **E04** | **Real-money Webhook & PDF Render** | Chuyển tiền thật $\rightarrow$ Webhook SePay thật $\rightarrow$ App tự động mở PDF | Máy thật | Đã tạo đơn E03. Có app ngân hàng thật. | 1. Dùng app ngân hàng chuyển đúng tiền/mã.<br/>2. App Android polling nhận `PAID`.<br/>3. Bấm "Đọc tài liệu". | Checkout tự động chuyển sang trạng thái thành công. Mở màn hình Reader kết xuất rõ nét các trang PDF. | CHỜ CHẠY |
-| **S02** | **Buyer Isolation & Account Switch** | Đảm bảo tài khoản khác không đọc được tài liệu, tự hủy khi đổi tài khoản | Máy thật | Buyer 1 đã mua tài liệu thành công ở ca E04. | 1. Đăng xuất Buyer 1.<br/>2. Đăng nhập Buyer 2.<br/>3. Thử mở tài liệu đã mua của Buyer 1. | Buyer 2 bị chặn 403. Bộ điều khiển `PdfReaderController` tự động xóa bộ nhớ cache và giải phóng tệp. | CHỜ CHẠY |
+| **E03** | **Real-money Android Checkout** | Kiểm thử tạo đơn và hiển thị thông tin chuyển khoản trên thiết bị Android thật | Máy thật | Bản build APK Debug cài trên máy thật kết nối Backend thử nghiệm. | 1. Mở màn hình Chi tiết tài liệu.<br/>2. Bấm "Mua tài liệu" $\rightarrow$ mở màn hình Checkout. | Hiển thị chính xác STK, Tên ngân hàng, Chủ TK, Số tiền và `paymentCode`. Đếm ngược 15 phút hoạt động. | **PASS** (VIVO V2190) |
+| **E04** | **Real-money Webhook & PDF Render** | Chuyển tiền thật $\rightarrow$ Webhook SePay thật $\rightarrow$ App tự động mở PDF | Máy thật | Đã tạo đơn E03. Có app ngân hàng thật. | 1. Dùng app ngân hàng chuyển đúng tiền/mã (với VietinBank cần thêm tiền tố `SEVQR ` trước `paymentCode`).<br/>2. App Android polling nhận `PAID`.<br/>3. Bấm "Đọc tài liệu". | Checkout tự động chuyển sang trạng thái thành công. Mở màn hình Reader kết xuất rõ nét các trang PDF. | **PASS** (VIVO V2190) |
+| **E07** | **Android Offline / Reopen Recovery** | Đảm bảo đơn `PENDING` không tự đổi thành `FAILED`/`PAID` khi mất mạng và đồng bộ lại khi online | Máy thật | Đơn hàng đang ở trạng thái `PENDING` trên màn Checkout. | 1. Bật chế độ máy bay / tắt Wi-Fi & 4G.<br/>2. Đóng và mở lại app (hoặc bấm làm mới).<br/>3. Bật lại mạng và đối chiếu trạng thái từ server. | Khi mất mạng giữ nguyên `PENDING` + thông báo mạng, không cấp PDF. Khi online lại, `GET /v1/orders/:orderId` phản ánh đúng trạng thái server và cập nhật Thư viện nếu đã `PAID`. | **PASS** (VIVO V2190) |
+| **S02** | **Buyer Isolation & Account Switch** | Đảm bảo tài khoản khác không đọc được tài liệu, tự hủy khi đổi tài khoản | Máy thật | Buyer 1 đã mua tài liệu thành công ở ca E04. | 1. Đăng xuất Buyer 1.<br/>2. Đăng nhập Buyer 2.<br/>3. Thử mở tài liệu đã mua của Buyer 1. | Buyer 2 bị chặn 403. Bộ điều khiển `PdfReaderController` tự động xóa bộ nhớ cache và giải phóng tệp. | **PASS** (VIVO V2190) |
+| **B05-Note** | **Order History API / UI Check** | Kiểm tra lịch sử giao dịch phản ánh đúng một đơn `PAID` (nếu B05 đã có trên `main`) | Máy thật / API | Buyer 1 đã hoàn tất ca E04. | 1. Kiểm tra API/UI lịch sử mua của Buyer 1.<br/>2. Nếu B05 chưa merge vào `main`, ghi nhận để kiểm lại tại G5. | Hiển thị đúng 1 đơn `PAID` cho giao dịch E04; hoặc ghi chú chuyển sang kiểm lại ở G5 nếu B05 chưa sẵn sàng. | Ghi nhận kiểm lại ở G5 (B05 chưa có UI trên `main`) |
 
 ---
 
@@ -94,14 +96,10 @@ npm test tests/paymentE2E.test.ts
 
 ## 4. BIÊN BẢN GHI NHẬN KẾT QUẢ THỰC TẾ
 
-*(Sẽ được điền ngay sau khi hoàn thành buổi kiểm thử thực tế)*
-
-* **Commit SHA kiểm thử:** `[Sẽ điền SHA git]`
-* **Thiết bị kiểm thử:** `[Ví dụ: Samsung Galaxy S21 / Pixel 7]`
-* **Phiên bản Android:** `[Ví dụ: Android 14 / API 34]`
+* **Commit SHA kiểm thử:** `5cc0080` (nhánh `feature/b07-payment-e2e-tests`)
+* **Thiết bị kiểm thử:** `VIVO V2190`
 * **Bản build APK:** `app-debug.apk`
-* **Ngày giờ thực hiện:** `[Sẽ điền timestamp]`
-* **Mã giao dịch SePay (đã che):** `sepay_txn_****`
-* **Số tài khoản nhận (đã che):** `0123****789`
-* **Đường dẫn video bằng chứng (nội bộ):** `[Google Drive Link]`
+* **Ngày giờ thực hiện:** `28/11/2026 01:32:22`
+* **Lưu ý cấu hình ngân hàng VietinBank:** Khi chuyển khoản thật qua VietinBank vào tài khoản liên kết SePay, nội dung chuyển khoản **bắt buộc phải bắt đầu bằng từ khóa `SEVQR `** (ví dụ: `SEVQR <paymentCode>`), nếu không VietinBank/SePay sẽ không ghi nhận biến động số dư để kích hoạt webhook.
+* **Bằng chứng kiểm thử:** Bằng chứng chi tiết được lưu nội bộ và bàn giao trực tiếp cho Leader khi review PR.
 

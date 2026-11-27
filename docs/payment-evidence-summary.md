@@ -12,13 +12,12 @@
 | Thông Số | Giá Trị Thực Nghiệm | Ghi Chú |
 | :--- | :--- | :--- |
 | **Nhánh Git (Branch)** | `feature/b07-payment-e2e-tests` | Khởi tạo từ `main` |
-| **Commit SHA** | `[Điền SHA thực tế khi chạy]` | SHA bản build nghiệm thu |
+| **Commit SHA** | `5cc0080` | SHA bản build nghiệm thu (trên nhánh `feature/b07-payment-e2e-tests`) |
 | **Bản build APK** | `app-debug.apk` (Variant: `debug`) | Đã kích hoạt kết nối backend nghiệm thu |
-| **Thiết bị Android thật** | `[Điền Model thực tế, ví dụ: Pixel 7 / Galaxy S21]` | Thiết bị chạy APK thật |
-| **Phiên bản Android OS** | `[Điền Android OS, ví dụ: Android 14 (API 34)]` | Máy thật |
-| **Cổng thanh toán** | SePay (VietQR / Chuyển khoản ngân hàng) | Webhook xác thực HMAC-SHA256 |
-| **Tài khoản thụ hưởng** | `***CHỦ TÀI KHOẢN ĐÃ DUYỆT***` (Đã che) | Số tài khoản: `****` |
-| **Số tiền thử nghiệm** | `[Ví dụ: 10.000 VNĐ]` | Theo phê duyệt của Leader |
+| **Thiết bị Android thật** | `VIVO V2190` | Thiết bị chạy APK thật |
+| **Ngày giờ chạy thực tế** | `28/11/2026 01:32:22` | Thời điểm nghiệm thu trên máy thật |
+| **Cổng thanh toán** | SePay (Chuyển khoản ngân hàng nhập tay) | Webhook xác thực HMAC-SHA256. **Lưu ý VietinBank:** nội dung chuyển khoản phải bắt đầu bằng `SEVQR ` trước `paymentCode` |
+| **Bằng chứng & dữ liệu nhạy cảm** | Lưu trữ nội bộ | Bằng chứng chi tiết được lưu nội bộ và bàn giao trực tiếp cho Leader khi review PR |
 
 ---
 
@@ -31,10 +30,11 @@
 | **P03** | Sai số tài khoản / sai mã / thiếu-thừa tiền / nhiều mã | Emulator | HTTP 200, lưu vào `reconciliation`, không cấp quyền | Đã đối soát cách ly 5 ca âm | **PASS** |
 | **P04** | Webhook bắn lặp / đồng thời (Idempotency) | Emulator | Đúng 1 bản ghi `PAID`, 1 `entitlement`, request 2 báo `DUPLICATE` | Đúng tính chất Idempotent | **PASS** |
 | **P05** | Thanh toán sau khi đơn hết hạn 15 phút | Emulator | Lưu `reconciliation` (`ORDER_EXPIRED`), không mở PDF | Đã đối soát quá hạn | **PASS** |
-| **P06** | Atomic transaction & chu trình E2E mở PDF | Emulator | Commit đồng thời `PAID` + `entitlements` trong 1 transaction | Giao dịch nguyên tử an toàn | **PASS** |
-| **E03** | Tạo đơn & hiển thị Checkout trên máy thật | Máy thật | Màn hình hiển thị đầy đủ STK, số tiền, `paymentCode` hợp lệ | Đang chờ APK từ Leader | **CHỜ CHẠY** |
-| **E04** | Chuyển tiền thật $\rightarrow$ Webhook $\rightarrow$ Mở PDF | Máy thật | Webhook tự động kích hoạt `PAID`, App tự động mở PDF rõ nét | Chờ cấu hình SePay thật | **CHỜ CHẠY** |
-| **S02** | Đổi sang Buyer 2 bị chặn đọc PDF | Máy thật | Buyer 2 không có quyền, app từ chối kết xuất | Chờ chạy đối chứng | **CHỜ CHẠY** |
+| **P06** | Atomic transaction & chu trình E2E mở PDF (kèm P06b lỗi DB 503 & retry) | Emulator | Commit đồng thời `PAID` + `entitlements` trong 1 transaction; lỗi DB trả `503` và retry thành công | Giao dịch nguyên tử an toàn | **PASS** |
+| **E03** | Tạo đơn & hiển thị Checkout trên máy thật | Máy thật (`VIVO V2190`) | Màn hình hiển thị đầy đủ STK, số tiền, `paymentCode` hợp lệ | Hiển thị đúng thông tin chuyển khoản trên `VIVO V2190` | **PASS** |
+| **E04** | Chuyển tiền thật $\rightarrow$ Webhook $\rightarrow$ Mở PDF | Máy thật (`VIVO V2190`) | Webhook tự động kích hoạt `PAID`, App tự động mở PDF rõ nét | Đã chuyển tiền thật (kèm tiền tố `SEVQR ` cho VietinBank), nhận `PAID` và mở PDF | **PASS** |
+| **E07** | Android mất mạng khi `PENDING` & đồng bộ lại khi online | Máy thật (`VIVO V2190`) | Không nhảy sai trạng thái khi offline; online đồng bộ lại đúng từ server | Giữ nguyên `PENDING` khi offline/reopen và đồng bộ đúng khi có mạng | **PASS** |
+| **S02** | Đổi sang Buyer 2 bị chặn đọc PDF | Máy thật (`VIVO V2190`) | Buyer 2 không có quyền, app từ chối kết xuất | Buyer 2 không thấy tài liệu trong thư viện và bị chặn đọc | **PASS** |
 
 ---
 
@@ -53,9 +53,8 @@
 * **Trạng thái sau thanh toán:** `PAID` (Commit cùng lúc với `entitlements/{buyerUid}/items/{docId}`)
 
 ### 3.2. Liên kết Video & Log chi tiết nội bộ
-* **Video nghiệm thu chu trình E2E trên máy thật:** `[Liên kết Google Drive nội bộ nhóm UniShare]`
+* **Video nghiệm thu chu trình E2E trên máy thật & Log giao dịch Backend:** Bằng chứng chi tiết được lưu nội bộ và bàn giao trực tiếp cho Leader khi review PR.
   - *Nội dung video:* Thể hiện rõ thao tác trước mua bị chặn $\rightarrow$ Tạo đơn $\rightarrow$ Chuyển khoản ngân hàng $\rightarrow$ Polling tự động chuyển `PAID` $\rightarrow$ Mở các trang PDF rõ ràng $\rightarrow$ Chuyển sang tài khoản Buyer 2 bị chặn 403.
-* **Log giao dịch Backend (Nội bộ):** `[Lưu trữ tại Google Drive / Server Logs nội bộ]`
 
 ---
 

@@ -26,6 +26,7 @@ import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { app } from "../src/app";
 import { initializeFirebaseAdmin } from "../src/shared/firebaseAuth";
 import { OrderPolicy } from "../src/orders/orderPolicy";
+import { FirestorePaymentStore } from "../src/payments/firestorePaymentStore";
 import {
   authorizePdfRead,
   DocumentAccessError
@@ -446,6 +447,49 @@ test("B07 E2E Suite: Kiểm thử tích hợp toàn diện thanh toán và mở 
       err.code === "ENTITLEMENT_REQUIRED"
   );
   console.log("PASS [P06]: Chu trình E2E hoàn tất: PAID nguyên tử, activePurchases=PAID, Buyer 1 mở PDF, Buyer B bị chặn");
+
+  // --------------------------------------------------------------------------
+  // CA P06b: LỖI CƠ SỞ DỮ LIỆU TẠM THỜI (503) & RETRY WEBHOOK AN TOÀN
+  // --------------------------------------------------------------------------
+  const fixtureP06b = await seedE2EOrderAndDocument({ amountVnd: 18000 });
+  const txnTransient = `txn_transient_${randomUUID().slice(0, 8)}`;
+  const originalProcess = FirestorePaymentStore.prototype.processVerifiedEvent;
+
+  FirestorePaymentStore.prototype.processVerifiedEvent = async () => {
+    throw new Error("SIMULATED_FIRESTORE_TRANSIENT_UNAVAILABLE");
+  };
+
+  try {
+    const failRes = await sendSignedSepayWebhook({
+      txnId: txnTransient,
+      content: `Thanh toan ${fixtureP06b.paymentCode}`,
+      amount: 18000
+    });
+    assert.equal(failRes.status, 503);
+    assert.equal(failRes.body.success, false);
+    assert.equal(failRes.body.error, "PAYMENT_PERSISTENCE_UNAVAILABLE");
+    await assertNoEntitlement(db, fixtureP06b.buyerId, fixtureP06b.docId);
+
+    const pendingOrder = await db.collection("orders").doc(fixtureP06b.order.orderId).get();
+    assert.equal(pendingOrder.get("status"), "PENDING");
+  } finally {
+    FirestorePaymentStore.prototype.processVerifiedEvent = originalProcess;
+  }
+
+  // SePay retry sau khi Firestore khôi phục -> phải xử lý thành công và cấp đúng 1 quyền
+  const retryRes = await sendSignedSepayWebhook({
+    txnId: txnTransient,
+    content: `Thanh toan ${fixtureP06b.paymentCode}`,
+    amount: 18000
+  });
+  assert.equal(retryRes.status, 200);
+  assert.equal(retryRes.body.status, "MATCHED");
+
+  const paidOrderAfterRetry = await db.collection("orders").doc(fixtureP06b.order.orderId).get();
+  assert.equal(paidOrderAfterRetry.get("status"), "PAID");
+  const authorizedAfterRetry = await authorizePdfRead(fixtureP06b.buyerId, fixtureP06b.docId, db);
+  assert.equal(authorizedAfterRetry.docId, fixtureP06b.docId);
+  console.log("PASS [P06b]: Lỗi DB tạm thời trả 503 (không ghi dở dang), retry sau khôi phục cấp quyền thành công");
 
   console.log("============================================================================");
   console.log("HOÀN THÀNH 100% CÁC CA KIỂM THỬ TÍCH HỢP P01-P06 CHO ISSUE B07 #18: PASS");
