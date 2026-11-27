@@ -349,7 +349,12 @@ fun AppNavHost(container: AppContainer) {
                                 navController.popBackStack()
                             },
                             onPublishSuccessNavigate = {
-                                navigateMainTab("explore")
+                                navController.navigate("seller-documents") {
+                                    popUpTo("seller-upload") {
+                                        inclusive = true
+                                    }
+                                    launchSingleTop = true
+                                }
                             }
                         )
                     }
