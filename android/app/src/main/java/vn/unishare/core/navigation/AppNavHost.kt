@@ -60,6 +60,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import vn.unishare.core.ui.components.UniBottomBar
 import vn.unishare.core.ui.theme.UniAppMode
 import android.widget.Toast
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.storage.FirebaseStorage
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.tasks.await
+import vn.unishare.data.repository.DocumentUploadRepositoryImpl
+import vn.unishare.feature.seller.ui.A04SellerRepositoryAdapter
+import vn.unishare.feature.seller.ui.UploadWizardScreen
+import vn.unishare.feature.seller.ui.SellerDocumentsScreen
+import vn.unishare.feature.seller.ui.UploadWizardUiState
+import vn.unishare.feature.seller.ui.UploadWizardViewModel
 
 private const val DEBUG_TEST_DOCUMENT = "draft_077e668cc1703bb4b3b8cd9c85ff9c8f704e282a102fa088ebe3538c033884d8"
 
@@ -199,7 +209,7 @@ fun AppNavHost(container: AppContainer) {
                         ProfileViewModel(
                             authRepository = container.authRepository,
                             profileRepository = container.profileRepository,
-                            sellerRoleContract = BuyerProfileRoleContract()
+                            sellerRoleContract = BuyerProfileRoleContract(apiBaseUrl = c06ApiUrl)
                         )
                     }
                 }
@@ -211,16 +221,149 @@ fun AppNavHost(container: AppContainer) {
                     navController.navigate("auth")
                 },
                 onOpenPurchasedLibrary = {
-                    navController.navigate("purchased")
+                    navigateMainTab("purchased")
+                },
+                onOpenSellerManagement = {
+                    navController.navigate("seller-documents")
+                },
+                onOpenSellerUpload = {
+                    navController.navigate("seller-upload")
                 },
                 onBottomNavSelected = { route -> navigateMainTab(route) }
             )
+        }
+        composable("seller-documents") { entry ->
+            val sellerUid = firebaseAuth.currentUser?.uid
+
+            if (sellerUid == null) {
+                Text("Vui lòng đăng nhập để quản lý tài liệu.")
+            } else {
+                val managementViewModel: UploadWizardViewModel = viewModel(
+                    viewModelStoreOwner = entry,
+                    factory = viewModelFactory {
+                        initializer {
+                            val a04 = DocumentUploadRepositoryImpl(
+                                context = context.applicationContext,
+                                auth = firebaseAuth,
+                                storage = FirebaseStorage.getInstance(),
+                                apiBaseUrl = c06ApiUrl
+                            )
+
+                            val adapter = A04SellerRepositoryAdapter(
+                                a04 = a04,
+                                metadataProvider = { UploadWizardUiState() },
+                                auth = firebaseAuth,
+                                apiBaseUrl = c06ApiUrl
+                            )
+
+                            UploadWizardViewModel(
+                                repository = adapter,
+                                autoLoadDocuments = true
+                            )
+                        }
+                    }
+                )
+
+                SellerDocumentsScreen(
+                    viewModel = managementViewModel,
+                    onBackClick = {
+                        navController.popBackStack()
+                    },
+                    onCreateDocumentClick = {
+                        navController.navigate("seller-upload")
+                    },
+                    onViewDetailClick = { docId ->
+                        navController.navigate("document/$docId")
+                    },
+                    onRevenueTabClick = {
+                        Toast.makeText(
+                            context,
+                            "Thống kê doanh thu chưa được kết nối.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+            }
+        }
+        composable("seller-upload") { entry ->
+            val sellerUid = firebaseAuth.currentUser?.uid
+
+            if (sellerUid == null) {
+                Text("Vui lòng đăng nhập để đăng tài liệu.")
+            } else {
+                val sellerAllowed by produceState<Boolean?>(
+                    initialValue = null,
+                    key1 = sellerUid
+                ) {
+                    value = runCatching {
+                        FirebaseFirestore.getInstance()
+                            .collection("users")
+                            .document(sellerUid)
+                            .get()
+                            .await()
+                            .getBoolean("sellerEnabled") == true
+                    }.getOrDefault(false)
+                }
+
+                when (sellerAllowed) {
+                    null -> Text("Đang kiểm tra quyền người bán...")
+
+                    false -> Text(
+                        "Tài khoản chưa có quyền Seller hoặc không thể xác minh quyền."
+                    )
+
+                    true -> {
+                        val wizard: UploadWizardViewModel = viewModel(
+                            viewModelStoreOwner = entry,
+                            factory = viewModelFactory {
+                                initializer {
+                                    lateinit var instance: UploadWizardViewModel
+
+                                    val a04 = DocumentUploadRepositoryImpl(
+                                        context = context.applicationContext,
+                                        auth = firebaseAuth,
+                                        storage = FirebaseStorage.getInstance(),
+                                        apiBaseUrl = c06ApiUrl
+                                    )
+
+                                    val adapter = A04SellerRepositoryAdapter(
+                                        a04 = a04,
+                                        metadataProvider = {
+                                            instance.wizardState.value
+                                        }
+                                    )
+
+                                    instance = UploadWizardViewModel(
+                                        repository = adapter,
+                                        autoLoadDocuments = false
+                                    )
+
+                                    instance
+                                }
+                            }
+                        )
+
+                        UploadWizardScreen(
+                            viewModel = wizard,
+                            onClose = {
+                                navController.popBackStack()
+                            },
+                            onPublishSuccessNavigate = {
+                                navigateMainTab("explore")
+                            }
+                        )
+                    }
+                }
+            }
         }
         composable("home") {
             UniShareBuyerHome(
                 onExploreClick = { navigateMainTab("explore") },
                 onPurchasedClick = { navigateMainTab("purchased") },
                 onProfileClick = { navigateMainTab("profile") },
+                onSellerUploadClick = {
+                    navController.navigate("seller-upload")
+                },
                 onBottomNavSelected = { route -> navigateMainTab(route) }
             )
         }
@@ -445,6 +588,7 @@ private fun UniShareBuyerHome(
     onExploreClick: () -> Unit,
     onPurchasedClick: () -> Unit,
     onProfileClick: () -> Unit,
+    onSellerUploadClick: () -> Unit,
     onBottomNavSelected: (String) -> Unit
 ) {
     Scaffold(
@@ -493,6 +637,12 @@ private fun UniShareBuyerHome(
 
             Button(onClick = onProfileClick) {
                 Text("Hồ sơ cá nhân")
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(onClick = onSellerUploadClick) {
+                Text("Đăng tài liệu (Seller)")
             }
         }
     }

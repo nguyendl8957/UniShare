@@ -2,24 +2,38 @@ package vn.unishare.feature.profile.ui
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import vn.unishare.core.ui.theme.UniAppMode
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 
-/**
- * Buyer-only profile integration.
- *
- * Uses the authenticated user's real Firestore permissions.
- * Seller functionality is deliberately not activated here.
- * No mock seller profiles, sales, reviews or enrollment.
- */
 class BuyerProfileRoleContract(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
+    private val apiBaseUrl: String =
+        "https://asia-southeast1-unishare-db44a.cloudfunctions.net/api"
 ) : SellerRoleContract {
+
+    init {
+        val url = URL(apiBaseUrl)
+        require(
+            url.protocol == "https" &&
+                url.host == "asia-southeast1-unishare-db44a.cloudfunctions.net" &&
+                url.path == "/api" &&
+                url.query == null
+        ) {
+            "Invalid Seller API endpoint"
+        }
+    }
 
     override suspend fun getSellerPermission(
         uid: String
-    ): Result<SellerPermissionSnapshot> = runCatching {
+    ): Result<SellerPermissionSnapshot> = try {
         check(auth.currentUser?.uid == uid) {
             "Phiên đăng nhập không hợp lệ."
         }
@@ -29,34 +43,34 @@ class BuyerProfileRoleContract(
             .get()
             .await()
 
-        val sellerEnabled = snapshot.getBoolean("sellerEnabled") == true
-
-        // Do not render the existing sample Seller dashboard.
-        check(!sellerEnabled) {
-            "Giao diện Seller thật chưa được tích hợp."
+        check(snapshot.exists()) {
+            "Chưa tìm thấy hồ sơ người dùng."
         }
 
-        SellerPermissionSnapshot(
-            uid = uid,
-            sellerEnabled = false,
-            lastMode = UniAppMode.BUYER
+        Result.success(
+            SellerPermissionSnapshot(
+                uid = uid,
+                sellerEnabled =
+                    snapshot.getBoolean("sellerEnabled") == true,
+                lastMode = UniAppMode.BUYER
+            )
         )
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     override suspend fun updateLastMode(
         uid: String,
         mode: UniAppMode
     ): Result<Unit> {
-        return if (
-            auth.currentUser?.uid == uid &&
-            mode == UniAppMode.BUYER
-        ) {
+        return if (auth.currentUser?.uid == uid) {
+            // UI mode only. No Firebase permission mutation.
             Result.success(Unit)
         } else {
             Result.failure(
-                IllegalStateException(
-                    "Chế độ Seller chưa được kích hoạt."
-                )
+                IllegalStateException("Phiên đăng nhập không hợp lệ.")
             )
         }
     }
@@ -65,11 +79,139 @@ class BuyerProfileRoleContract(
         uid: String,
         confirmTerms: Boolean
     ): Result<SellerPermissionSnapshot> {
-        return Result.failure(
-            UnsupportedOperationException(
-                "Đăng ký Seller chưa được kết nối với backend."
+        if (!confirmTerms) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "Bạn cần xác nhận điều khoản Người bán."
+                )
             )
-        )
+        }
+
+        try {
+            val user = auth.currentUser
+                ?: return Result.failure(
+                    IllegalStateException("Vui lòng đăng nhập.")
+                )
+
+            if (user.uid != uid) {
+                return Result.failure(
+                    IllegalStateException("Phiên đăng nhập đã thay đổi.")
+                )
+            }
+
+            val token = user.getIdToken(false).await().token
+                ?: return Result.failure(
+                    IllegalStateException("Không thể xác thực tài khoản.")
+                )
+
+            val accepted = withContext(Dispatchers.IO) {
+                val connection = URL(
+                    "$apiBaseUrl/v1/seller/enroll"
+                ).openConnection() as HttpURLConnection
+
+                try {
+                    connection.requestMethod = "POST"
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 20000
+                    connection.instanceFollowRedirects = false
+                    connection.doOutput = true
+
+                    connection.setRequestProperty(
+                        "Authorization", "Bearer $token"
+                    )
+                    connection.setRequestProperty(
+                        "Content-Type", "application/json; charset=utf-8"
+                    )
+                    connection.setRequestProperty(
+                        "Accept", "application/json"
+                    )
+
+                    connection.outputStream.use {
+                        it.write(
+                            """{"acceptTerms":true}"""
+                                .toByteArray(Charsets.UTF_8)
+                        )
+                    }
+
+                    when (val status = connection.responseCode) {
+                        200 -> {
+                            val contentType = connection.contentType
+                                ?.substringBefore(';')
+                                ?.trim()
+
+                            if (contentType != "application/json") {
+                                throw IOException(
+                                    "Unexpected Seller response"
+                                )
+                            }
+
+                            val bytes = connection.inputStream.use {
+                                it.readNBytes(8193)
+                            }
+
+                            if (bytes.size > 8192) {
+                                throw IOException(
+                                    "Seller response too large"
+                                )
+                            }
+
+                            val json = JSONObject(
+                                String(bytes, Charsets.UTF_8)
+                            )
+
+                            check(
+                                json.optBoolean("sellerEnabled") &&
+                                json.optString("status") == "ACTIVE"
+                            ) {
+                                "Phản hồi Seller không hợp lệ."
+                            }
+
+                            true
+                        }
+
+                        400 -> throw IllegalStateException(
+                            "Hãy hoàn thiện hồ sơ và xác nhận điều khoản."
+                        )
+
+                        401 -> throw IllegalStateException(
+                            "Phiên đăng nhập hết hạn."
+                        )
+
+                        404 -> throw IllegalStateException(
+                            "Chưa tìm thấy hồ sơ hoặc API chưa triển khai."
+                        )
+
+                        503 -> throw IllegalStateException(
+                            "Dịch vụ Seller chưa sẵn sàng."
+                        )
+
+                        else -> throw IllegalStateException(
+                            "Đăng ký Seller thất bại (HTTP $status)."
+                        )
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+
+            if (!accepted || auth.currentUser?.uid != uid) {
+                return Result.failure(
+                    IllegalStateException("Phiên đăng nhập đã thay đổi.")
+                )
+            }
+
+            return Result.success(
+                SellerPermissionSnapshot(
+                    uid = uid,
+                    sellerEnabled = true,
+                    lastMode = UniAppMode.SELLER
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
     }
 
     override suspend fun getSellerPublicProfile(
@@ -77,7 +219,7 @@ class BuyerProfileRoleContract(
     ): Result<SellerPublicProfile?> {
         return Result.failure(
             UnsupportedOperationException(
-                "Hồ sơ Seller công khai chưa được tích hợp."
+                "Hồ sơ Seller công khai chưa được kết nối."
             )
         )
     }
