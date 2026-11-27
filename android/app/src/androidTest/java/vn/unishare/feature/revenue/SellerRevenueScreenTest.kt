@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -288,6 +289,7 @@ class SellerRevenueScreenTest {
             }
         }
 
+        composeTestRule.onNodeWithTag("seller_revenue_list").performScrollToKey("list_error_view")
         composeTestRule.onNodeWithTag("list_error_view").assertIsDisplayed()
         composeTestRule.onNodeWithText("Mất kết nối mạng").assertIsDisplayed()
         composeTestRule.onNodeWithText("Thử lại").performClick()
@@ -321,7 +323,9 @@ class SellerRevenueScreenTest {
             }
         }
 
+        composeTestRule.onNodeWithTag("seller_revenue_list").performScrollToKey("load_more_error")
         composeTestRule.onNodeWithText("Lỗi tải thêm trang").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Thử lại").assertIsDisplayed()
         composeTestRule.onNodeWithText("Thử lại").performClick()
         assertTrue(retryLoadMoreClicked)
     }
