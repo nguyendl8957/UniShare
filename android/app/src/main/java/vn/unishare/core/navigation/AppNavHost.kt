@@ -45,12 +45,20 @@ import vn.unishare.feature.auth.ui.AuthScreen
 import vn.unishare.feature.auth.ui.AuthViewModel
 import vn.unishare.feature.payment.ui.CheckoutScreen
 import vn.unishare.feature.payment.ui.CheckoutViewModel
+import vn.unishare.feature.ai.ui.AiChatScreen
+import vn.unishare.feature.ai.ui.AiChatViewModel
+import vn.unishare.feature.ai.ui.FakeDocumentAiRepository
+import vn.unishare.feature.explore.ui.ExploreScreen
+import vn.unishare.feature.explore.ui.ExploreViewModel
+import vn.unishare.feature.explore.ui.DocumentDetailScreen
 
 private const val DEBUG_TEST_DOCUMENT = "draft_077e668cc1703bb4b3b8cd9c85ff9c8f704e282a102fa088ebe3538c033884d8"
 
 @Composable
 fun AppNavHost(container: AppContainer) {
     val navController = rememberNavController()
+    // C07 UI integration: uses sample catalog data for now.
+    val exploreViewModel: ExploreViewModel = viewModel()
     val logoutScope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -94,8 +102,61 @@ fun AppNavHost(container: AppContainer) {
 
     NavHost(
         navController = navController,
-        startDestination = "home"
+        startDestination = "explore"
     ) {
+
+        composable("explore") {
+            ExploreScreen(
+                viewModel = exploreViewModel,
+                onDocumentClick = { docId ->
+                    navController.navigate("document/$docId")
+                },
+                onBottomNavSelected = { route ->
+                    when (route) {
+                        "home", "explore" -> Unit
+                        "purchased", "library" ->
+                            navController.navigate("purchased")
+                    }
+                }
+            )
+        }
+
+        composable(
+            route = "document/{docId}",
+            arguments = listOf(
+                navArgument("docId") {
+                    type = NavType.StringType
+                }
+            )
+        ) { entry ->
+            val docId = entry.arguments
+                ?.getString("docId")
+                .orEmpty()
+
+            DocumentDetailScreen(
+                docId = docId,
+                viewModel = exploreViewModel,
+                onBackClick = {
+                    navController.popBackStack()
+                },
+                onBuyClick = { targetId ->
+                    if (allowCheckout) {
+                        navController.navigate("checkout/$targetId")
+                    }
+                },
+                onSellerClick = {
+                    // Seller public profile navigation comes later.
+                },
+                onBottomNavSelected = { route ->
+                    when (route) {
+                        "home", "explore" ->
+                            navController.navigate("explore")
+                        "purchased", "library" ->
+                            navController.navigate("purchased")
+                    }
+                }
+            )
+        }
         composable("home") {
             Column(
                 modifier = Modifier
@@ -239,7 +300,7 @@ fun AppNavHost(container: AppContainer) {
                     navController.popBackStack()
                 },
                 onAskAiClick = {
-                    // C07 will implement real AI navigation.
+                    navController.navigate("ai-chat/$docId")
                 },
                 onRequireLoginClick = {
                     navController.navigate("auth")
@@ -290,6 +351,50 @@ fun AppNavHost(container: AppContainer) {
                 },
                 onAuthCanceled = {
                     navController.popBackStack()
+                }
+            )
+        }
+        composable(
+            route = "ai-chat/{docId}",
+            arguments = listOf(
+                navArgument("docId") {
+                    type = NavType.StringType
+                }
+            )
+        ) { entry ->
+            val docId = entry.arguments
+                ?.getString("docId")
+                .orEmpty()
+
+            val aiViewModel: AiChatViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        AiChatViewModel(
+                            authRepository = container.authRepository,
+                            aiRepository = FakeDocumentAiRepository()
+                        )
+                    }
+                }
+            )
+
+            AiChatScreen(
+                docId = docId,
+                documentTitle = "Tài liệu UniShare",
+                viewModel = aiViewModel,
+                onBackClick = {
+                    navController.popBackStack()
+                },
+                onCitationClick = { _, _ ->
+                    navController.popBackStack()
+                },
+                onLoginClick = {
+                    navController.navigate("auth")
+                },
+                onBottomNavSelected = { route ->
+                    if (route == "purchased") {
+                        navController.navigate("purchased")
+                    }
                 }
             )
         }
