@@ -282,7 +282,7 @@ private fun SellerPublicProfileBody(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Surface(
+                        if (profile.verifiedBadge.isNotBlank()) Surface(
                             color = PublicProfileBadgeBlue,
                             shape = CircleShape,
                             border = BorderStroke(2.dp, Color.White),
@@ -324,7 +324,7 @@ private fun SellerPublicProfileBody(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    Text(
+                    if (profile.joinedLabel.isNotBlank()) Text(
                         text = profile.joinedLabel,
                         color = PublicProfileMuted,
                         fontSize = 11.sp
@@ -354,7 +354,7 @@ private fun SellerPublicProfileBody(
             ) {
                 PublicSellerStatCard(
                     label = "Đánh giá",
-                    value = "${profile.rating} (${profile.reviewCount})",
+                    value = if (profile.reviewCount >= 0) "${profile.rating} (${profile.reviewCount})" else "—",
                     showStar = true,
                     modifier = Modifier
                         .weight(1f)
@@ -370,7 +370,7 @@ private fun SellerPublicProfileBody(
                 )
                 PublicSellerStatCard(
                     label = "Đã bán",
-                    value = "${profile.totalSold}",
+                    value = if (profile.totalSold >= 0) "${profile.totalSold}" else "—",
                     showStar = false,
                     modifier = Modifier
                         .weight(1f)
@@ -398,7 +398,7 @@ private fun SellerPublicProfileBody(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = profile.bio,
+                        text = profile.bio.ifBlank { "Người bán chưa cập nhật giới thiệu." },
                         color = PublicProfileMuted,
                         fontSize = 12.5.sp,
                         lineHeight = 18.sp,
@@ -573,7 +573,7 @@ private fun PublicSellerListingCard(
                         )
                     }
 
-                    Row(
+                    if (item.reviewCount >= 0) Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
@@ -598,7 +598,7 @@ private fun PublicSellerListingCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
+                    if (item.viewCount >= 0 && item.soldCount >= 0) Text(
                         text = "${item.viewCount} lượt xem • ${item.soldCount} đã bán",
                         color = PublicProfileMuted,
                         fontSize = 10.5.sp

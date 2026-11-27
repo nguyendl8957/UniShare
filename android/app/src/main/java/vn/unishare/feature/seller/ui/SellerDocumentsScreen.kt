@@ -725,13 +725,13 @@ private fun SellerDocumentCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 CardActionButton(
-                    label = "Sửa (chưa hỗ trợ)",
+                    label = "Sửa",
                     iconRes = R.drawable.ic_edit,
                     textColor = ManageAccentBlue,
                     iconTint = ManageAccentBlue,
                     containerColor = ManageActionBg,
                     borderColor = ManageActionBorder,
-                    enabled = false,
+                    enabled = true,
                     onClick = onEditClick,
                     modifier = Modifier
                         .weight(1f)
@@ -745,7 +745,7 @@ private fun SellerDocumentCard(
                     iconTint = if (isArchived) ManageAccentBlue else ManageNavy,
                     containerColor = ManageActionBg,
                     borderColor = ManageActionBorder,
-                    enabled = !isArchived,
+                    enabled = true,
                     onClick = if (isArchived) onUnhideClick else onHideClick,
                     modifier = Modifier
                         .weight(1f)
@@ -911,11 +911,11 @@ private fun SellerDocumentActionSheet(
                 modifier = Modifier.testTag("sheet_action_view")
             )
             ActionSheetMenuRow(
-                label = "Chỉnh sửa (chưa hỗ trợ)",
+                label = "Chỉnh sửa",
                 iconRes = R.drawable.ic_edit,
                 iconTint = ManageNavy,
                 textColor = ManageNavy,
-                enabled = false,
+                enabled = true,
                 onClick = onEdit,
                 modifier = Modifier.testTag("sheet_action_edit")
             )
@@ -924,7 +924,7 @@ private fun SellerDocumentActionSheet(
                 iconRes = if (isArchived) R.drawable.ic_eye else R.drawable.ic_eye_off,
                 iconTint = if (isArchived) ManageAccentBlue else ManageNavy,
                 textColor = if (isArchived) ManageAccentBlue else ManageNavy,
-                enabled = !isArchived,
+                enabled = true,
                 onClick = if (isArchived) onUnhide else onHide,
                 modifier = Modifier.testTag("sheet_action_hide")
             )
