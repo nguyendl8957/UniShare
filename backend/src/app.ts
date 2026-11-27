@@ -6,6 +6,7 @@ import { sendApiError } from "./shared/httpErrors";
 import { draftsRouter } from "./documents/drafts";
 import { publishRouter } from "./documents/publish";
 import { manageRouter } from "./documents/manage";
+import { metadataRouter } from "./documents/metadata";
 import { contentRouter } from "./documents/content";
 import { orderRoutes } from "./orders/orderRoutes";
 import { libraryRouter } from "./documents/library";
@@ -36,6 +37,7 @@ app.get("/v1/me", requireAuth, (_req, res) => {
 app.use("/v1/documents", draftsRouter);
 app.use("/v1/documents", publishRouter);
 app.use("/v1/documents", manageRouter);
+app.use("/v1/documents", metadataRouter);
 app.use("/v1/documents", contentRouter);
 app.use("/v1/orders", orderRoutes);
 app.use("/v1/me", libraryRouter);

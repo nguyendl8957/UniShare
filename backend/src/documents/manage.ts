@@ -16,7 +16,7 @@ manageRouter.patch(
     if (
       typeof docId !== "string" ||
       !/^[a-zA-Z0-9_-]{1,150}$/.test(docId) ||
-      req.body?.action !== "archive" ||
+      !["archive", "unarchive"].includes(req.body?.action) ||
       typeof req.body?.expectedVersionId !== "string"
     ) {
       sendApiError(
@@ -29,6 +29,7 @@ manageRouter.patch(
     }
 
     const expectedVersionId = req.body.expectedVersionId;
+    const action = req.body.action as "archive" | "unarchive";
 
     try {
       const db = getFirestore();
@@ -65,6 +66,79 @@ manageRouter.patch(
           return "VERSION_CONFLICT";
         }
 
+        if (action === "unarchive") {
+          if (document.status === "PUBLISHED") {
+            return "ALREADY_PUBLISHED";
+          }
+
+          if (document.status !== "ARCHIVED") {
+            return "INVALID_STATUS";
+          }
+
+          const versionRef = documentRef
+            .collection("versions")
+            .doc(expectedVersionId);
+
+          const versionSnapshot = await transaction.get(versionRef);
+          const catalogSnapshot = await transaction.get(catalogRef);
+
+          if (catalogSnapshot.exists) {
+            return "CATALOG_CONFLICT";
+          }
+
+          const version = versionSnapshot.data();
+          const previewRefs = version?.previewPaths;
+
+          if (
+            !versionSnapshot.exists ||
+            version?.pdfPath !==
+              `private/${docId}/${expectedVersionId}/source.pdf` ||
+            !Array.isArray(previewRefs) ||
+            previewRefs.length < 1 ||
+            previewRefs.length > 5 ||
+            !previewRefs.every(
+              (path: unknown) =>
+                typeof path === "string" &&
+                path.startsWith(
+                  `previews/${docId}/${expectedVersionId}/`
+                )
+            ) ||
+            typeof document.title !== "string" ||
+            !document.title.trim() ||
+            typeof document.category !== "string" ||
+            typeof document.subject !== "string" ||
+            !Number.isSafeInteger(document.priceVnd) ||
+            document.priceVnd <= 0
+          ) {
+            return "VERSION_NOT_READY";
+          }
+
+          const titleNormalized = document.title
+            .trim()
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/\p{M}/gu, "")
+            .replace(/đ/g, "d")
+            .replace(/\s+/g, " ");
+
+          transaction.create(catalogRef, {
+            title: document.title,
+            titleNormalized,
+            subjectId: document.subject,
+            categoryId: document.category,
+            priceVnd: document.priceVnd,
+            sellerId: uid,
+            previewRefs,
+            publishedAt: FieldValue.serverTimestamp()
+          });
+
+          transaction.update(documentRef, {
+            status: "PUBLISHED",
+            updatedAt: FieldValue.serverTimestamp()
+          });
+
+          return "UNARCHIVED";
+        }
         if (document.status === "ARCHIVED") {
           return "ALREADY_ARCHIVED";
         }
@@ -113,10 +187,20 @@ manageRouter.patch(
           );
           return;
 
+        case "CATALOG_CONFLICT":
+        case "VERSION_NOT_READY":
+          sendApiError(
+            res, 409, "INVALID_REQUEST", "Cannot restore this document version"
+          );
+          return;
+
         default:
           res.status(200).json({
             docId,
-            status: "ARCHIVED",
+            status:
+              result === "UNARCHIVED" || result === "ALREADY_PUBLISHED"
+                ? "PUBLISHED"
+                : "ARCHIVED",
             alreadyArchived: result === "ALREADY_ARCHIVED"
           });
       }
