@@ -414,6 +414,15 @@ class A04SellerRepositoryAdapter(
             "Giá bán không hợp lệ."
         }
 
+        val expected = request.expectedMetadata
+            ?: throw IllegalStateException(
+                "Thiếu thông tin gốc. Vui lòng mở lại biểu mẫu."
+            )
+
+        require(expected.docId == request.docId) {
+            "Dữ liệu gốc không khớp tài liệu."
+        }
+
         val user = auth.currentUser
             ?: throw IllegalStateException("Vui lòng đăng nhập.")
 
@@ -460,6 +469,15 @@ class A04SellerRepositoryAdapter(
                     .put("subject", request.subject.trim())
                     .put("description", request.description.trim())
                     .put("priceVnd", request.priceVnd)
+                    .put(
+                        "expectedMetadata",
+                        JSONObject()
+                            .put("title", expected.title)
+                            .put("category", expected.category)
+                            .put("subject", expected.subject)
+                            .put("description", expected.description)
+                            .put("priceVnd", expected.priceVnd)
+                    )
                     .toString()
 
                 // School is not stored by the current backend

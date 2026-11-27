@@ -45,13 +45,26 @@ test("Phase 1 Seller metadata and lifecycle", async (t) => {
 
   const auth = (token: string) => `Bearer ${token}`;
 
-  const metadata = (title: string, priceVnd: number) => ({
+  const metadata = (
+    title: string,
+    priceVnd: number,
+    originalTitle = "Original Document",
+    originalPrice = 15000,
+    originalDescription = "Original description"
+  ) => ({
     expectedVersionId: "v1",
     title,
     category: "notes",
     subject: "programming",
     description: "Seller integration test",
-    priceVnd
+    priceVnd,
+    expectedMetadata: {
+      title: originalTitle,
+      category: "notes",
+      subject: "programming",
+      description: originalDescription,
+      priceVnd: originalPrice
+    }
   });
 
   try {
@@ -143,7 +156,7 @@ test("Phase 1 Seller metadata and lifecycle", async (t) => {
       const response = await request(app)
         .patch(`/v1/documents/${docId}/metadata`)
         .set("Authorization", auth(seller.token))
-        .send(metadata("Final Published Title", 21000));
+        .send(metadata("Final Published Title", 21000, "Updated Document", 18000, "Seller integration test"));
 
       assert.equal(response.status, 200, JSON.stringify(response.body));
 
@@ -155,6 +168,30 @@ test("Phase 1 Seller metadata and lifecycle", async (t) => {
       assert.equal(catalog.get("title"), "Final Published Title");
     });
 
+    await t.test("409 rejects stale metadata without overwriting", async () => {
+      const response = await request(app)
+        .patch(`/v1/documents/${docId}/metadata`)
+        .set("Authorization", auth(seller.token))
+        .send(
+          metadata(
+            "Stale Overwrite Attempt",
+            25000,
+            "Updated Document",
+            18000,
+            "Seller integration test"
+          )
+        );
+
+      assert.equal(response.status, 409, JSON.stringify(response.body));
+
+      const document = await documentRef.get();
+      const catalog = await catalogRef.get();
+
+      assert.equal(document.get("title"), "Final Published Title");
+      assert.equal(document.get("priceVnd"), 21000);
+      assert.equal(catalog.get("title"), "Final Published Title");
+      assert.equal(catalog.get("priceVnd"), 21000);
+    });
     await t.test("public Seller profile excludes private fields", async () => {
       const response = await request(app)
         .get(`/v1/seller/${seller.uid}/public-profile`)

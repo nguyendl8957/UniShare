@@ -28,13 +28,22 @@ metadataRouter.patch("/:docId/metadata", requireAuth, async (req, res) => {
     category,
     subject,
     description,
-    priceVnd
+    priceVnd,
+    expectedMetadata
   } = body;
 
   if (
     typeof docId !== "string" ||
     !DOC_ID.test(docId) ||
     expectedVersionId !== "v1" ||
+    !expectedMetadata ||
+    typeof expectedMetadata !== "object" ||
+    Array.isArray(expectedMetadata) ||
+    typeof expectedMetadata.title !== "string" ||
+    typeof expectedMetadata.category !== "string" ||
+    typeof expectedMetadata.subject !== "string" ||
+    typeof expectedMetadata.description !== "string" ||
+    !Number.isSafeInteger(expectedMetadata.priceVnd) ||
     typeof title !== "string" ||
     title.trim().length < 5 ||
     title.trim().length > 200 ||
@@ -88,6 +97,16 @@ metadataRouter.patch("/:docId/metadata", requireAuth, async (req, res) => {
       if (document.sellerId !== uid) return "FORBIDDEN";
 
       if (document.activeVersionId !== expectedVersionId) {
+        return "VERSION_CONFLICT";
+      }
+
+      if (
+        document.title !== expectedMetadata.title ||
+        document.category !== expectedMetadata.category ||
+        document.subject !== expectedMetadata.subject ||
+        (document.description ?? "") !== expectedMetadata.description ||
+        document.priceVnd !== expectedMetadata.priceVnd
+      ) {
         return "VERSION_CONFLICT";
       }
 

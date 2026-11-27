@@ -451,7 +451,8 @@ class UploadWizardViewModel(
                     subject = document.subject,
                     school = document.school,
                     priceText = document.priceVnd.toString(),
-                    description = document.description
+                    description = document.description,
+                    originalDocument = document
                 )
             )
         }
@@ -520,7 +521,8 @@ class UploadWizardViewModel(
                 subject = draft.subject.trim(),
                 school = draft.school.trim(),
                 priceVnd = validPrice,
-                description = draft.description.trim()
+                description = draft.description.trim(),
+                expectedMetadata = draft.originalDocument
             )
             repository.updateDocumentMetadata(request).fold(
                 onSuccess = { updated ->
