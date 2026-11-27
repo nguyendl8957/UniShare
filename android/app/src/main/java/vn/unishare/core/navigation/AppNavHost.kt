@@ -53,6 +53,7 @@ import vn.unishare.feature.explore.ui.ExploreViewModel
 import vn.unishare.feature.explore.ui.FirestoreExploreCatalogRepository
 import vn.unishare.feature.explore.ui.DocumentDetailScreen
 import vn.unishare.feature.profile.ui.ProfileScreen
+import vn.unishare.feature.profile.ui.SellerPublicProfileScreen
 import vn.unishare.feature.profile.ui.ProfileViewModel
 import vn.unishare.feature.profile.ui.BuyerProfileRoleContract
 import androidx.compose.material3.Scaffold
@@ -191,14 +192,55 @@ fun AppNavHost(container: AppContainer) {
                         navController.navigate("checkout/$targetId")
                     }
                 },
-                onSellerClick = {
-                    Toast.makeText(
-                        context,
-                        "Hồ sơ người bán chưa được cập nhật.",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                onSellerClick = { sellerId ->
+                    if (sellerId.matches(Regex("[A-Za-z0-9_-]{1,150}"))) {
+                        navController.navigate("seller-public/$sellerId")
+                    }
                 },
                 onBottomNavSelected = { route -> navigateMainTab(route) }
+            )
+        }
+        composable(
+            route = "seller-public/{sellerId}",
+            arguments = listOf(
+                navArgument("sellerId") {
+                    type = NavType.StringType
+                }
+            )
+        ) { entry ->
+            val sellerId = entry.arguments
+                ?.getString("sellerId")
+                .orEmpty()
+
+            val publicProfileViewModel: ProfileViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        ProfileViewModel(
+                            authRepository = container.authRepository,
+                            profileRepository = container.profileRepository,
+                            sellerRoleContract = BuyerProfileRoleContract(
+                                apiBaseUrl = c06ApiUrl
+                            )
+                        )
+                    }
+                }
+            )
+
+            SellerPublicProfileScreen(
+                sellerId = sellerId,
+                viewModel = publicProfileViewModel,
+                onBackClick = {
+                    navController.popBackStack()
+                },
+                onBackToListingClick = {
+                    navController.popBackStack()
+                },
+                onDocumentClick = { targetDocId ->
+                    if (targetDocId.matches(Regex("[A-Za-z0-9_-]{1,150}"))) {
+                        navController.navigate("document/$targetDocId")
+                    }
+                }
             )
         }
         composable("profile") { entry ->

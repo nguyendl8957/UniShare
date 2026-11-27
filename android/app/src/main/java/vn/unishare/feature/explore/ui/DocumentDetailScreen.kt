@@ -78,6 +78,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import vn.unishare.R
+import vn.unishare.feature.profile.ui.BuyerProfileRoleContract
+import vn.unishare.feature.profile.ui.SellerPublicProfile
 import vn.unishare.core.ui.components.UniBottomBar
 import vn.unishare.core.ui.components.UniButton
 import vn.unishare.core.ui.feedback.UiFeedback
@@ -635,6 +637,37 @@ private fun SellerPublicCard(
     seller: SellerPublicSummary,
     onClick: () -> Unit
 ) {
+    val repository = remember(seller.sellerId) {
+        BuyerProfileRoleContract()
+    }
+
+    val profileResult by produceState<Result<SellerPublicProfile?>?>(
+        initialValue = null,
+        key1 = seller.sellerId
+    ) {
+        value = if (seller.sellerId.isBlank()) {
+            Result.failure(IllegalArgumentException("Missing Seller ID"))
+        } else {
+            repository.getSellerPublicProfile(seller.sellerId)
+        }
+    }
+
+    val profile = profileResult?.getOrNull()
+
+    val sellerName = when {
+        profileResult == null -> "Đang tải người bán..."
+        profileResult?.isFailure == true -> "Không tải được hồ sơ"
+        profile == null -> "Không tìm thấy người bán"
+        else -> profile.displayName.ifBlank { "Người bán chưa cập nhật" }
+    }
+
+    val sellerSchool = when {
+        profileResult == null -> "Đang tải..."
+        profileResult?.isFailure == true -> "Vui lòng thử lại sau"
+        profile == null -> ""
+        else -> profile.school.ifBlank { "Chưa cập nhật trường" }
+    }
+
     val gradient = Brush.verticalGradient(
         colors = listOf(DetailSellerGradientTop, DetailSellerGradientBottom)
     )
@@ -648,7 +681,7 @@ private fun SellerPublicCard(
             .padding(12.dp)
             .testTag("card_seller_public")
             .semantics {
-                contentDescription = "Hồ sơ công khai người bán ${seller.displayName}"
+                contentDescription = "Hồ sơ công khai người bán ${sellerName}"
             }
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -681,7 +714,7 @@ private fun SellerPublicCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = seller.displayName,
+                            text = sellerName,
                             color = DetailTitleInk,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
@@ -704,7 +737,7 @@ private fun SellerPublicCard(
                         }
                     }
                     Text(
-                        text = seller.school,
+                        text = sellerSchool,
                         color = DetailMutedInk,
                         fontSize = 11.sp,
                         maxLines = 1,
