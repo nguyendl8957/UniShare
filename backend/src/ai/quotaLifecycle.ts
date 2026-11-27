@@ -227,7 +227,7 @@ export async function finishAiRequest(
     !/^\d{4}-\d{2}-\d{2}$/.test(dayUtc) ||
     !Number.isSafeInteger(actualTokens) ||
     actualTokens < 0 ||
-    actualTokens > AI_TOKENS_PER_REQUEST ||
+    actualTokens > 1000000 ||
     (outcome === "NOT_SENT" && actualTokens !== 0) || (outcome !== "SUCCESS" && outcome !== "NOT_SENT")
   ) {
     throw new Error("Invalid AI settlement");

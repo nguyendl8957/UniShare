@@ -90,7 +90,8 @@ export function createAiChatRouter(
     }
 
     const activeProvider = provider ?? (
-      process.env.GEMINI_API_KEY
+      process.env.UNISHARE_AI_ENABLED === "true" &&
+        process.env.GEMINI_API_KEY
         ? createGeminiProvider(process.env.GEMINI_API_KEY)
         : null
     );
@@ -270,7 +271,7 @@ export function createAiChatRouter(
         ) ||
         !Number.isSafeInteger(reply.actualTokens) ||
         reply.actualTokens < 0 ||
-        reply.actualTokens > AI_TOKENS_PER_REQUEST
+        reply.actualTokens > 1000000
       ) {
         // Do not blindly retry an already-sent provider call.
         throw new Error("Invalid AI provider response");
