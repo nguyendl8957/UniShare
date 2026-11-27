@@ -58,7 +58,7 @@ test("A08 idempotency and quota settlement", async (t) => {
 
       const snapshot = await dayRef.get();
       assert.equal(snapshot.get("requests"), 1);
-      assert.equal(snapshot.get("reservedTokens"), 768);
+      assert.equal(snapshot.get("reservedTokens"), 8192);
     });
 
     await t.test("same ID with different content is rejected", async () => {
@@ -114,7 +114,7 @@ test("A08 idempotency and quota settlement", async (t) => {
       const snapshot = await dayRef.get();
       assert.equal(snapshot.get("requests"), 2);
       assert.equal(snapshot.get("usedTokens"), 150);
-      assert.equal(snapshot.get("reservedTokens"), 768);
+      assert.equal(snapshot.get("reservedTokens"), 8192);
     });
 
     await t.test("failed provider returns reservation", async () => {
@@ -155,7 +155,7 @@ test("A08 idempotency and quota settlement", async (t) => {
 
       const snapshot = await dayRef.get();
       assert.equal(snapshot.get("requests"), 2);
-      assert.equal(snapshot.get("reservedTokens"), 768);
+      assert.equal(snapshot.get("reservedTokens"), 8192);
       assert.equal(snapshot.get("usedTokens"), 150);
     });
 

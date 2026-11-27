@@ -19,6 +19,7 @@ import {
 } from "./provider";
 import { loadAuthorizedPdfText } from "./pdfSource";
 import { PdfTextError } from "./pdfText";
+import { createGeminiProvider } from "./geminiProvider";
 
 const DOC_ID_PATTERN = /^[A-Za-z0-9_-]{1,150}$/;
 const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -88,7 +89,13 @@ export function createAiChatRouter(
       return;
     }
 
-    if (provider === null) {
+    const activeProvider = provider ?? (
+      process.env.GEMINI_API_KEY
+        ? createGeminiProvider(process.env.GEMINI_API_KEY)
+        : null
+    );
+
+    if (activeProvider === null) {
       sendApiError(
         res, 503, "SERVICE_UNAVAILABLE",
         "AI provider is not configured"
@@ -139,6 +146,25 @@ export function createAiChatRouter(
             return;
           }
 
+          // Recheck immediately before returning private AI content.
+          try {
+            await authorizePdfRead(uid, docId);
+          } catch (error) {
+            if (
+              error instanceof DocumentAccessError &&
+              error.statusCode === 403
+            ) {
+              sendApiError(
+                res, 403, "FORBIDDEN", "Document access denied"
+              );
+            } else {
+              sendApiError(
+                res, 503, "SERVICE_UNAVAILABLE",
+                "Cannot verify document access"
+              );
+            }
+            return;
+          }
           res.status(200).json(cached);
           return;
         }
@@ -213,7 +239,7 @@ export function createAiChatRouter(
       let reply;
 
       try {
-        reply = await provider.ask({ docId, question, pages });
+        reply = await activeProvider.ask({ docId, question, pages });
       } catch (error) {
         if (error instanceof AiProviderNotSentError) {
           // Safe to refund only when definitely not sent.
@@ -269,6 +295,25 @@ export function createAiChatRouter(
         throw new Error("AI settlement failed");
       }
 
+      // Do not return the generated answer after entitlement revocation.
+      try {
+        await authorizePdfRead(uid, docId);
+      } catch (error) {
+        if (
+          error instanceof DocumentAccessError &&
+          error.statusCode === 403
+        ) {
+          sendApiError(
+            res, 403, "FORBIDDEN", "Document access denied"
+          );
+        } else {
+          sendApiError(
+            res, 503, "SERVICE_UNAVAILABLE",
+            "Cannot verify document access"
+          );
+        }
+        return;
+      }
       res.status(200).json(answer);
     } catch {
       console.error("AI chat processing failed");

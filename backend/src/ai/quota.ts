@@ -4,8 +4,8 @@ import {
 } from "firebase-admin/firestore";
 
 export const AI_DAILY_REQUEST_LIMIT = 10;
-export const AI_DAILY_RESERVED_TOKEN_LIMIT = 8192;
-export const AI_TOKENS_PER_REQUEST = 768;
+export const AI_DAILY_RESERVED_TOKEN_LIMIT = 81920;
+export const AI_TOKENS_PER_REQUEST = 8192;
 
 export type AiQuotaResult =
   | { allowed: true; requests: number; reservedTokens: number }
