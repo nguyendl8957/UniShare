@@ -108,12 +108,13 @@ export function createAiChatRouter(
       uid, docId, question, clientMessageId
     };
 
-    // This version handles requests within the same UTC day.
-    // Cross-day retries must be implemented before production.
-    const dayUtc = utcDay();
+    // Use the same UTC date for reservation and settlement,
+    // including requests that finish after midnight.
+    const startedAt = new Date();
+    const dayUtc = utcDay(startedAt);
 
     try {
-      const begin = await beginAiRequest(identity);
+      const begin = await beginAiRequest(identity, startedAt);
 
       switch (begin.kind) {
         case "PAYLOAD_MISMATCH":
@@ -137,8 +138,12 @@ export function createAiChatRouter(
           return;
 
         case "COMPLETED": {
+          if (!begin.dayUtc) {
+            throw new Error("Completed AI request has no UTC day");
+          }
+
           const cached = await getCachedAiAnswer(
-            identity, dayUtc
+            identity, begin.dayUtc
           );
 
           if (!cached) {
