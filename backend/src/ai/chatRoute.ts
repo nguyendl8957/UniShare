@@ -89,10 +89,20 @@ export function createAiChatRouter(
       return;
     }
 
+    // Production access is limited to explicitly approved Firebase UIDs.
+    // The UID comes exclusively from verified Firebase Authentication.
+    const allowedTestUids = (
+      process.env.UNISHARE_AI_TEST_UIDS ?? ""
+    )
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
     const activeProvider = provider ?? (
       process.env.UNISHARE_AI_ENABLED === "true" &&
-        process.env.GEMINI_API_KEY
-        ? createGeminiProvider(process.env.GEMINI_API_KEY)
+      Boolean(process.env.GEMINI_API_KEY) &&
+      allowedTestUids.includes(uid)
+        ? createGeminiProvider(process.env.GEMINI_API_KEY!)
         : null
     );
 
