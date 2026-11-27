@@ -217,10 +217,155 @@ class BuyerProfileRoleContract(
     override suspend fun getSellerPublicProfile(
         sellerId: String
     ): Result<SellerPublicProfile?> {
-        return Result.failure(
-            UnsupportedOperationException(
-                "Hồ sơ Seller công khai chưa được kết nối."
+        if (!sellerId.matches(Regex("[A-Za-z0-9_-]{1,150}"))) {
+            return Result.failure(
+                IllegalArgumentException("Mã người bán không hợp lệ.")
             )
-        )
+        }
+
+        try {
+            val user = auth.currentUser
+                ?: return Result.failure(
+                    IllegalStateException("Vui lòng đăng nhập.")
+                )
+
+            val token = user.getIdToken(false).await().token
+                ?: return Result.failure(
+                    IllegalStateException("Không thể xác thực.")
+                )
+
+            val profile = withContext(Dispatchers.IO) {
+                val connection = URL(
+                    "$apiBaseUrl/v1/seller/$sellerId/public-profile"
+                ).openConnection() as HttpURLConnection
+
+                try {
+                    connection.requestMethod = "GET"
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 20000
+                    connection.instanceFollowRedirects = false
+
+                    connection.setRequestProperty(
+                        "Authorization", "Bearer $token"
+                    )
+                    connection.setRequestProperty(
+                        "Accept", "application/json"
+                    )
+
+                    when (val status = connection.responseCode) {
+                        200 -> {
+                            val contentType = connection.contentType
+                                ?.substringBefore(';')
+                                ?.trim()
+
+                            check(contentType == "application/json") {
+                                "Phản hồi hồ sơ không hợp lệ."
+                            }
+
+                            val bytes = connection.inputStream.use {
+                                it.readNBytes(131073)
+                            }
+
+                            check(bytes.size <= 131072) {
+                                "Dữ liệu hồ sơ vượt giới hạn."
+                            }
+
+                            val json = JSONObject(
+                                String(bytes, Charsets.UTF_8)
+                            )
+
+                            check(json.optString("sellerId") == sellerId) {
+                                "Mã người bán không khớp."
+                            }
+
+                            val items = json.optJSONArray("listings")
+                                ?: throw IllegalStateException(
+                                    "Danh sách tài liệu không hợp lệ."
+                                )
+
+                            check(items.length() <= 50) {
+                                "Danh sách tài liệu vượt giới hạn."
+                            }
+
+                            val listings = (0 until items.length()).map { i ->
+                                val item = items.getJSONObject(i)
+
+                                val docId = item.getString("docId")
+                                val title = item.getString("title")
+                                val category = item.getString("categoryLabel")
+                                val price = item.getInt("priceVnd")
+
+                                check(
+                                    docId.matches(
+                                        Regex("[A-Za-z0-9_-]{1,150}")
+                                    ) &&
+                                    title.isNotBlank() &&
+                                    price >= 0
+                                ) {
+                                    "Dữ liệu tài liệu công khai không hợp lệ."
+                                }
+
+                                SellerPublicListingItem(
+                                    docId = docId,
+                                    title = title,
+                                    categoryLabel = category,
+                                    priceVnd = price,
+                                    rating = -1.0,
+                                    reviewCount = -1,
+                                    viewCount = -1,
+                                    soldCount = -1
+                                )
+                            }
+
+                            SellerPublicProfile(
+                                sellerId = sellerId,
+                                displayName = json.getString("displayName"),
+                                school = json.optString("school"),
+                                faculty = json.optString("faculty"),
+                                bio = "",
+                                verifiedBadge = "",
+                                rating = -1.0,
+                                reviewCount = -1,
+                                totalDocuments = listings.size,
+                                totalSold = -1,
+                                joinedLabel = "",
+                                achievements = emptyList(),
+                                listings = listings
+                            )
+                        }
+
+                        404 -> null
+
+                        401 -> throw IllegalStateException(
+                            "Phiên đăng nhập hết hạn."
+                        )
+
+                        400 -> throw IllegalArgumentException(
+                            "Mã người bán không hợp lệ."
+                        )
+
+                        503 -> throw IllegalStateException(
+                            "Dịch vụ hồ sơ tạm thời không khả dụng."
+                        )
+
+                        else -> throw IllegalStateException(
+                            "Tải hồ sơ thất bại (HTTP $status)."
+                        )
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+
+            check(auth.currentUser?.uid == user.uid) {
+                "Tài khoản đã thay đổi."
+            }
+
+            return Result.success(profile)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
     }
 }
