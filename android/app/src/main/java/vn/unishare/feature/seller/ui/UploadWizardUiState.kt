@@ -87,7 +87,8 @@ data class UpdateDocumentMetadataRequest(
     val subject: String,
     val school: String,
     val priceVnd: Int,
-    val description: String
+    val description: String,
+    val expectedMetadata: SellerDocumentItem? = null
 )
 
 data class SellerDocumentItem(
@@ -245,6 +246,7 @@ data class SellerEditDraft(
     val school: String,
     val priceText: String,
     val description: String,
+    val originalDocument: SellerDocumentItem? = null,
     val titleError: String? = null,
     val priceError: String? = null
 )

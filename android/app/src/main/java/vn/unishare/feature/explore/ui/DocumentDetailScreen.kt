@@ -78,6 +78,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import vn.unishare.R
+import vn.unishare.feature.profile.ui.BuyerProfileRoleContract
+import vn.unishare.feature.profile.ui.SellerPublicProfile
 import vn.unishare.core.ui.components.UniBottomBar
 import vn.unishare.core.ui.components.UniButton
 import vn.unishare.core.ui.feedback.UiFeedback
@@ -86,6 +88,8 @@ import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import java.net.HttpURLConnection
 import java.net.URL
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.tasks.await
 
 private val DetailPrimaryGreen = Color(0xFF2E7D32)
 private val DetailCtaGreen = Color(0xFF17823B)
@@ -633,6 +637,37 @@ private fun SellerPublicCard(
     seller: SellerPublicSummary,
     onClick: () -> Unit
 ) {
+    val repository = remember(seller.sellerId) {
+        BuyerProfileRoleContract()
+    }
+
+    val profileResult by produceState<Result<SellerPublicProfile?>?>(
+        initialValue = null,
+        key1 = seller.sellerId
+    ) {
+        value = if (seller.sellerId.isBlank()) {
+            Result.failure(IllegalArgumentException("Missing Seller ID"))
+        } else {
+            repository.getSellerPublicProfile(seller.sellerId)
+        }
+    }
+
+    val profile = profileResult?.getOrNull()
+
+    val sellerName = when {
+        profileResult == null -> "Đang tải người bán..."
+        profileResult?.isFailure == true -> "Không tải được hồ sơ"
+        profile == null -> "Không tìm thấy người bán"
+        else -> profile.displayName.ifBlank { "Người bán chưa cập nhật" }
+    }
+
+    val sellerSchool = when {
+        profileResult == null -> "Đang tải..."
+        profileResult?.isFailure == true -> "Vui lòng thử lại sau"
+        profile == null -> ""
+        else -> profile.school.ifBlank { "Chưa cập nhật trường" }
+    }
+
     val gradient = Brush.verticalGradient(
         colors = listOf(DetailSellerGradientTop, DetailSellerGradientBottom)
     )
@@ -646,7 +681,7 @@ private fun SellerPublicCard(
             .padding(12.dp)
             .testTag("card_seller_public")
             .semantics {
-                contentDescription = "Hồ sơ công khai người bán ${seller.displayName}"
+                contentDescription = "Hồ sơ công khai người bán ${sellerName}"
             }
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -679,7 +714,7 @@ private fun SellerPublicCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = seller.displayName,
+                            text = sellerName,
                             color = DetailTitleInk,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
@@ -702,7 +737,7 @@ private fun SellerPublicCard(
                         }
                     }
                     Text(
-                        text = seller.school,
+                        text = sellerSchool,
                         color = DetailMutedInk,
                         fontSize = 11.sp,
                         maxLines = 1,
@@ -729,7 +764,7 @@ private fun SellerPublicCard(
                     modifier = Modifier.size(13.dp)
                 )
                 Text(
-                    text = seller.rating.toString(),
+                    text = if (seller.reviewCount == 0) "Chưa có đánh giá" else seller.rating.toString(),
                     color = DetailPrimaryGreen,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold
@@ -746,7 +781,7 @@ private fun SellerPublicCard(
                         .background(DetailDividerColor)
                 )
                 Text(
-                    text = "Đã bán ${seller.soldCount}",
+                    text = if (seller.soldCount == 0) "Chưa có số liệu bán" else "Đã bán ${seller.soldCount}",
                     color = DetailMutedInk,
                     fontSize = 11.sp
                 )
@@ -1023,6 +1058,7 @@ internal fun DocumentPreviewImage(
 ) {
     var retryNonce by remember(preview.id) { mutableIntStateOf(0) }
     val isRemoteHttp = preview.imageUrl.startsWith("http://") || preview.imageUrl.startsWith("https://")
+    val isRemoteStorage = preview.imageUrl.startsWith("storage://")
     val effectiveBroken = isMarkedBroken || (preview.isBroken && retryNonce == 0)
 
     if (effectiveBroken) {
@@ -1043,7 +1079,7 @@ internal fun DocumentPreviewImage(
         return
     }
 
-    if (isRemoteHttp) {
+    if (isRemoteHttp || isRemoteStorage) {
         val remoteState by produceState<RemoteBitmapState>(
             initialValue = RemoteBitmapState.Loading,
             key1 = preview.imageUrl,
@@ -1051,18 +1087,29 @@ internal fun DocumentPreviewImage(
         ) {
             value = withContext(Dispatchers.IO) {
                 try {
-                    val connection = (URL(preview.imageUrl).openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 5_000
-                        readTimeout = 5_000
-                        instanceFollowRedirects = true
-                    }
-                    connection.inputStream.use { stream ->
-                        val bitmap = BitmapFactory.decodeStream(stream)
-                        if (bitmap != null) {
-                            RemoteBitmapState.Loaded(bitmap.asImageBitmap())
-                        } else {
-                            RemoteBitmapState.Failed
+                    val bitmap = if (isRemoteStorage) {
+                        val path = preview.imageUrl.removePrefix("storage://")
+                        val bytes = FirebaseStorage.getInstance()
+                            .getReference(path)
+                            .getBytes(5L * 1024 * 1024)
+                            .await()
+
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } else {
+                        val connection = (URL(preview.imageUrl).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 5_000
+                            readTimeout = 5_000
+                            instanceFollowRedirects = true
                         }
+                        connection.inputStream.use { stream ->
+                            BitmapFactory.decodeStream(stream)
+                        }
+                    }
+
+                    if (bitmap != null) {
+                        RemoteBitmapState.Loaded(bitmap.asImageBitmap())
+                    } else {
+                        RemoteBitmapState.Failed
                     }
                 } catch (_: Exception) {
                     RemoteBitmapState.Failed

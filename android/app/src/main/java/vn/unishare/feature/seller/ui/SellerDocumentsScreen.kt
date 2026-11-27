@@ -753,7 +753,7 @@ private fun SellerDocumentCard(
                 )
 
                 CardActionButton(
-                    label = "Xóa",
+                    label = "Lưu trữ",
                     iconRes = R.drawable.ic_delete,
                     textColor = if (isArchived) ManageStatusArchivedText else ManageDeleteRed,
                     iconTint = if (isArchived) ManageStatusArchivedText else ManageDeleteRed,
@@ -911,7 +911,7 @@ private fun SellerDocumentActionSheet(
                 modifier = Modifier.testTag("sheet_action_view")
             )
             ActionSheetMenuRow(
-                label = "Chỉnh sửa thông tin",
+                label = "Chỉnh sửa",
                 iconRes = R.drawable.ic_edit,
                 iconTint = ManageNavy,
                 textColor = ManageNavy,
@@ -929,7 +929,7 @@ private fun SellerDocumentActionSheet(
                 modifier = Modifier.testTag("sheet_action_hide")
             )
             ActionSheetMenuRow(
-                label = "Xóa tài liệu",
+                label = "Lưu trữ tài liệu",
                 iconRes = R.drawable.ic_delete,
                 iconTint = if (isArchived) ManageStatusArchivedText else ManageDeleteRed,
                 textColor = if (isArchived) ManageStatusArchivedText else ManageNavy,
