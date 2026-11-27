@@ -35,6 +35,29 @@ function aiError(
   });
 }
 
+export type AiProductionAccessConfig = {
+  enabled?: string;
+  apiKey?: string;
+  allowlist?: string;
+};
+
+// Fail closed: all three conditions must be satisfied.
+export function isProductionAiAllowed(
+  uid: string,
+  config: AiProductionAccessConfig
+): boolean {
+  const allowedUids = (config.allowlist ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return (
+    config.enabled === "true" &&
+    Boolean(config.apiKey?.trim()) &&
+    uid.length > 0 &&
+    allowedUids.includes(uid)
+  );
+}
 // Production deliberately has no provider until explicitly configured.
 // Tests inject a fake provider without affecting the deployed route.
 export function createAiChatRouter(
@@ -89,19 +112,13 @@ export function createAiChatRouter(
       return;
     }
 
-    // Production access is limited to explicitly approved Firebase UIDs.
-    // The UID comes exclusively from verified Firebase Authentication.
-    const allowedTestUids = (
-      process.env.UNISHARE_AI_TEST_UIDS ?? ""
-    )
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-
+    // The UID is verified by requireAuth, never taken from req.body.
     const activeProvider = provider ?? (
-      process.env.UNISHARE_AI_ENABLED === "true" &&
-      Boolean(process.env.GEMINI_API_KEY) &&
-      allowedTestUids.includes(uid)
+      isProductionAiAllowed(uid, {
+        enabled: process.env.UNISHARE_AI_ENABLED,
+        apiKey: process.env.GEMINI_API_KEY,
+        allowlist: process.env.UNISHARE_AI_TEST_UIDS
+      })
         ? createGeminiProvider(process.env.GEMINI_API_KEY!)
         : null
     );
