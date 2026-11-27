@@ -725,13 +725,13 @@ private fun SellerDocumentCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 CardActionButton(
-                    label = "Sửa",
+                    label = "Sửa (chưa hỗ trợ)",
                     iconRes = R.drawable.ic_edit,
                     textColor = ManageAccentBlue,
                     iconTint = ManageAccentBlue,
                     containerColor = ManageActionBg,
                     borderColor = ManageActionBorder,
-                    enabled = true,
+                    enabled = false,
                     onClick = onEditClick,
                     modifier = Modifier
                         .weight(1f)
@@ -745,7 +745,7 @@ private fun SellerDocumentCard(
                     iconTint = if (isArchived) ManageAccentBlue else ManageNavy,
                     containerColor = ManageActionBg,
                     borderColor = ManageActionBorder,
-                    enabled = true,
+                    enabled = !isArchived,
                     onClick = if (isArchived) onUnhideClick else onHideClick,
                     modifier = Modifier
                         .weight(1f)
@@ -753,7 +753,7 @@ private fun SellerDocumentCard(
                 )
 
                 CardActionButton(
-                    label = "Xóa",
+                    label = "Lưu trữ",
                     iconRes = R.drawable.ic_delete,
                     textColor = if (isArchived) ManageStatusArchivedText else ManageDeleteRed,
                     iconTint = if (isArchived) ManageStatusArchivedText else ManageDeleteRed,
@@ -911,11 +911,11 @@ private fun SellerDocumentActionSheet(
                 modifier = Modifier.testTag("sheet_action_view")
             )
             ActionSheetMenuRow(
-                label = "Chỉnh sửa thông tin",
+                label = "Chỉnh sửa (chưa hỗ trợ)",
                 iconRes = R.drawable.ic_edit,
                 iconTint = ManageNavy,
                 textColor = ManageNavy,
-                enabled = true,
+                enabled = false,
                 onClick = onEdit,
                 modifier = Modifier.testTag("sheet_action_edit")
             )
@@ -924,12 +924,12 @@ private fun SellerDocumentActionSheet(
                 iconRes = if (isArchived) R.drawable.ic_eye else R.drawable.ic_eye_off,
                 iconTint = if (isArchived) ManageAccentBlue else ManageNavy,
                 textColor = if (isArchived) ManageAccentBlue else ManageNavy,
-                enabled = true,
+                enabled = !isArchived,
                 onClick = if (isArchived) onUnhide else onHide,
                 modifier = Modifier.testTag("sheet_action_hide")
             )
             ActionSheetMenuRow(
-                label = "Xóa tài liệu",
+                label = "Lưu trữ tài liệu",
                 iconRes = R.drawable.ic_delete,
                 iconTint = if (isArchived) ManageStatusArchivedText else ManageDeleteRed,
                 textColor = if (isArchived) ManageStatusArchivedText else ManageNavy,
