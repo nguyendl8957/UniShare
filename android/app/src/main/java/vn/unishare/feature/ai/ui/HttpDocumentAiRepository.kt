@@ -100,18 +100,7 @@ class HttpDocumentAiRepository(
                     val status = connection.responseCode
 
                     if (status != 200) {
-                        throw when (status) {
-                            401 -> AiChatFailure.Unauthorized()
-                            403 -> AiChatFailure.Forbidden()
-                            429 -> AiChatFailure.QuotaExceeded()
-                            409 -> AiChatFailure.ServiceUnavailable(
-                                "Câu hỏi đang được xử lý. Vui lòng thử lại sau."
-                            )
-                            400, 404, 422 -> IllegalArgumentException(
-                                "Không thể xử lý câu hỏi hoặc tài liệu này."
-                            )
-                            else -> AiChatFailure.ServiceUnavailable()
-                        }
+                        throw mapAiHttpStatus(status)
                     }
 
                     val contentType = connection.contentType
@@ -190,4 +179,20 @@ class HttpDocumentAiRepository(
             return Result.failure(error)
         }
     }
+}
+/**
+ * Pure HTTP error mapping, independently unit-testable.
+ * Does not access Firebase, network or private document data.
+ */
+internal fun mapAiHttpStatus(status: Int): Exception = when (status) {
+    401 -> AiChatFailure.Unauthorized()
+    403 -> AiChatFailure.Forbidden()
+    429 -> AiChatFailure.QuotaExceeded()
+    409 -> AiChatFailure.ServiceUnavailable(
+        "Câu hỏi đang được xử lý. Vui lòng thử lại sau."
+    )
+    400, 404, 422 -> IllegalArgumentException(
+        "Không thể xử lý câu hỏi hoặc tài liệu này."
+    )
+    else -> AiChatFailure.ServiceUnavailable()
 }
