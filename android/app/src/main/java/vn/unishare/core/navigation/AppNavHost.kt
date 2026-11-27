@@ -43,6 +43,9 @@ import vn.unishare.feature.library.ui.RealPdfReaderScreen
 import vn.unishare.feature.library.ui.PurchasedLibraryListState
 import vn.unishare.feature.auth.ui.AuthScreen
 import vn.unishare.feature.auth.ui.AuthViewModel
+import vn.unishare.feature.payment.history.BuyerTransactionDetailScreen
+import vn.unishare.feature.payment.history.BuyerTransactionsScreen
+import vn.unishare.feature.payment.history.BuyerTransactionsViewModel
 import vn.unishare.feature.payment.ui.CheckoutScreen
 import vn.unishare.feature.payment.ui.CheckoutViewModel
 
@@ -161,6 +164,14 @@ fun AppNavHost(container: AppContainer) {
                     }) {
                         Text("Kiểm thử Checkout B04")
                     }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Button(onClick = {
+                    navController.navigate("buyer/transactions")
+                }) {
+                    Text("Lịch sử mua (B05)")
                 }
             }
         }
@@ -348,6 +359,74 @@ fun AppNavHost(container: AppContainer) {
                     }
                 )
             }
+        }
+
+        composable(route = "buyer/transactions") { entry ->
+            val transactionsViewModel: BuyerTransactionsViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        BuyerTransactionsViewModel(
+                            authRepository = container.authRepository,
+                            transactionsRepository = container.createBuyerTransactionsRepository(),
+                            savedStateHandle = createSavedStateHandle()
+                        )
+                    }
+                }
+            )
+
+            BuyerTransactionsScreen(
+                viewModel = transactionsViewModel,
+                onNavigateToDetail = { orderId ->
+                    navController.navigate("buyer/transactions/$orderId")
+                },
+                onNavigateToAuth = {
+                    navController.navigate("auth")
+                },
+                onBackClick = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(
+            route = "buyer/transactions/{orderId}",
+            arguments = listOf(
+                navArgument("orderId") {
+                    type = NavType.StringType
+                }
+            )
+        ) { entry ->
+            val orderId = entry.arguments
+                ?.getString("orderId")
+                .orEmpty()
+
+            val detailViewModel: BuyerTransactionsViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        BuyerTransactionsViewModel(
+                            authRepository = container.authRepository,
+                            transactionsRepository = container.createBuyerTransactionsRepository(),
+                            savedStateHandle = createSavedStateHandle()
+                        )
+                    }
+                }
+            )
+
+            BuyerTransactionDetailScreen(
+                viewModel = detailViewModel,
+                orderId = orderId,
+                onBackClick = {
+                    navController.popBackStack()
+                },
+                onNavigateToReader = { docId ->
+                    navController.navigate("reader/$docId")
+                },
+                onNavigateToCheckout = { docId ->
+                    navController.navigate("checkout/$docId")
+                }
+            )
         }
     }
 }

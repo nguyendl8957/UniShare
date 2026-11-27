@@ -387,4 +387,76 @@ class BuyerTransactionsViewModelTest {
         assertEquals("ord_buyer1_003", state.selectedOrderDetail?.orderId)
         assertEquals(OrderStatus.EXPIRED, state.selectedOrderDetail?.status)
     }
+
+    @Test
+    fun loadMore_withDuplicateOrderIdAcrossPages_deduplicatesItems() = runBlocking {
+        val dupRepo = object : BuyerTransactionsRepository {
+            private fun item(id: String) = BuyerTransactionItemUiModel(
+                orderId = id,
+                docId = "doc_$id",
+                documentTitle = "Tài liệu $id",
+                amountVnd = 20_000L,
+                status = OrderStatus.PAID,
+                paymentCode = "UNI_$id",
+                createdAtUtc = "2026-11-24T07:30:00Z",
+                formattedDate = "24/11/2026",
+                formattedTime = "14:30",
+                formattedAmountVnd = "20.000 đ"
+            )
+
+            override suspend fun getMyTransactions(cursor: String?, limit: Int): Result<BuyerTransactionsPage> {
+                return if (cursor == null) {
+                    Result.success(BuyerTransactionsPage(listOf(item("ord_dup_1"), item("ord_dup_2")), "p2"))
+                } else {
+                    // Trang 2 cố tình trả về trùng ord_dup_2
+                    Result.success(BuyerTransactionsPage(listOf(item("ord_dup_2"), item("ord_dup_3")), null))
+                }
+            }
+
+            override suspend fun getTransactionDetail(orderId: String): Result<BuyerTransactionDetailUiModel> {
+                return Result.failure(NoSuchElementException("Not used"))
+            }
+        }
+        val authRepo = TestFakeAuthRepository(AuthSession.SignedIn(FakeBuyerTransactionsRepository.UID_BUYER_ONE))
+
+        val viewModel = BuyerTransactionsViewModel(
+            authRepository = authRepo,
+            transactionsRepository = dupRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        viewModel.loadMore()
+
+        val content = viewModel.uiState.value.listState as BuyerTransactionsListState.Content
+        assertEquals(listOf("ord_dup_1", "ord_dup_2", "ord_dup_3"), content.items.map { it.orderId })
+        assertFalse(viewModel.uiState.value.hasMore)
+    }
+
+    @Test
+    fun loadMore_offlineError_preservesExistingItems_and_setsLoadMoreError() = runBlocking {
+        val fakeRepo = FakeBuyerTransactionsRepository(activeUid = FakeBuyerTransactionsRepository.UID_BUYER_ONE)
+        val authRepo = TestFakeAuthRepository(AuthSession.SignedIn(FakeBuyerTransactionsRepository.UID_BUYER_ONE))
+
+        val viewModel = BuyerTransactionsViewModel(
+            authRepository = authRepo,
+            transactionsRepository = fakeRepo,
+            savedStateHandle = SavedStateHandle(),
+            mainDispatcher = Dispatchers.Unconfined
+        )
+
+        // Trang 1 đã tải thành công 2 đơn
+        assertEquals(2, (viewModel.uiState.value.listState as BuyerTransactionsListState.Content).items.size)
+
+        // Mất mạng khi tải trang 2
+        fakeRepo.simulateOffline = true
+        viewModel.loadMore()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.listState is BuyerTransactionsListState.Content)
+        assertEquals(2, (state.listState as BuyerTransactionsListState.Content).items.size)
+        assertFalse(state.isLoadingMore)
+        assertEquals("Không có kết nối mạng", state.loadMoreError)
+        assertTrue(state.hasMore)
+    }
 }

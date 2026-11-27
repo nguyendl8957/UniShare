@@ -37,7 +37,8 @@ data class BuyerTransactionItemUiModel(
 )
 
 /**
- * 2. Mô hình hiển thị chi tiết biên nhận trong ứng dụng (In-app Receipt Detail UI Model)
+ * 2. Mô hình hiển thị chi tiết biên nhận rút gọn trong ứng dụng (In-app Receipt Detail UI Model)
+ * Chỉ chứa các trường snapshot công khai của đơn hàng, không mang thông tin nội bộ/tài khoản ngân hàng.
  */
 data class BuyerTransactionDetailUiModel(
     val orderId: String,
@@ -50,11 +51,7 @@ data class BuyerTransactionDetailUiModel(
     val expiresAtUtc: String,
     val formattedCreatedAt: String = "",
     val formattedExpiresAt: String = "",
-    val formattedAmountVnd: String = "",
-    val bankName: String? = null,
-    val bankCode: String? = null,
-    val accountNumber: String? = null,
-    val accountHolder: String? = null
+    val formattedAmountVnd: String = ""
 )
 
 /**

@@ -67,11 +67,7 @@ class BuyerTransactionsFlowTest {
         expiresAtUtc = "2026-11-24T07:45:00Z",
         formattedCreatedAt = "24/11/2026 14:30",
         formattedExpiresAt = "24/11/2026 14:45",
-        formattedAmountVnd = "50.000 đ",
-        bankName = "Ngân hàng Quân đội (MB)",
-        bankCode = "MB",
-        accountNumber = "0345678999",
-        accountHolder = "UNISHARE SYSTEM"
+        formattedAmountVnd = "50.000 đ"
     )
 
     private val samplePendingDetail = BuyerTransactionDetailUiModel(
@@ -85,11 +81,7 @@ class BuyerTransactionsFlowTest {
         expiresAtUtc = "2026-11-24T08:15:00Z",
         formattedCreatedAt = "24/11/2026 15:00",
         formattedExpiresAt = "24/11/2026 15:15",
-        formattedAmountVnd = "35.000 đ",
-        bankName = "Ngân hàng Quân đội (MB)",
-        bankCode = "MB",
-        accountNumber = "0345678999",
-        accountHolder = "UNISHARE SYSTEM"
+        formattedAmountVnd = "35.000 đ"
     )
 
     private val sampleExpiredDetail = BuyerTransactionDetailUiModel(
@@ -250,21 +242,31 @@ class BuyerTransactionsFlowTest {
     }
 
     @Test
-    fun detailScreen_rendersBankTransferInformation() {
+    fun detailScreen_failedState_rendersFailedWarning() {
+        val sampleFailedDetail = BuyerTransactionDetailUiModel(
+            orderId = "ord_test_005",
+            docId = "doc_fail_01",
+            documentTitle = "Tài liệu kiểm thử thất bại",
+            amountVnd = 25_000L,
+            status = OrderStatus.FAILED,
+            paymentCode = "UNIFAIL01",
+            createdAtUtc = "2026-11-22T07:30:00Z",
+            expiresAtUtc = "2026-11-22T07:45:00Z",
+            formattedCreatedAt = "22/11/2026 14:30",
+            formattedExpiresAt = "22/11/2026 14:45",
+            formattedAmountVnd = "25.000 đ"
+        )
+
         composeTestRule.setContent {
             UniShareTheme(mode = UniAppMode.BUYER) {
                 BuyerTransactionDetailContent(
-                    detail = samplePaidDetail
+                    detail = sampleFailedDetail
                 )
             }
         }
 
-        composeTestRule.onNodeWithTag("text_detail_bank_name").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("text_detail_account_number").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("text_detail_account_holder").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Ngân hàng Quân đội (MB)").assertIsDisplayed()
-        composeTestRule.onNodeWithText("0345678999").assertIsDisplayed()
-        composeTestRule.onNodeWithText("UNISHARE SYSTEM").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Giao dịch không thành công").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Không thể hoàn tất đơn hàng này do lỗi nghiệp vụ.").assertIsDisplayed()
     }
 
     @Test
@@ -292,5 +294,43 @@ class BuyerTransactionsFlowTest {
         }
 
         composeTestRule.onNodeWithText("Đang kiểm tra đối soát").assertIsDisplayed()
+    }
+
+    @Test
+    fun initialLoadingState_rendersSkeletonFeedback() {
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.BUYER) {
+                BuyerTransactionsContent(
+                    uiState = BuyerTransactionsUiState(
+                        activeUid = "uid_buyer_01",
+                        listState = BuyerTransactionsListState.InitialLoading
+                    )
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("feedback_skeleton").assertIsDisplayed()
+    }
+
+    @Test
+    fun errorState_rendersErrorFeedback_and_triggersRetry() {
+        var retried = false
+
+        composeTestRule.setContent {
+            UniShareTheme(mode = UniAppMode.BUYER) {
+                BuyerTransactionsContent(
+                    uiState = BuyerTransactionsUiState(
+                        activeUid = "uid_buyer_01",
+                        listState = BuyerTransactionsListState.Error("Không có kết nối mạng")
+                    ),
+                    onRetryInitial = { retried = true }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("feedback_error").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Không có kết nối mạng").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Thử lại").performClick()
+        assertTrue(retried)
     }
 }

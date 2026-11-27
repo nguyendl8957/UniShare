@@ -102,11 +102,7 @@ class FakeBuyerTransactionsRepository(
                 expiresAtUtc = now.minusSeconds(6300).toString(),
                 formattedCreatedAt = formatIsoToVn(now.minusSeconds(7200).toString(), zoneVn),
                 formattedExpiresAt = formatIsoToVn(now.minusSeconds(6300).toString(), zoneVn),
-                formattedAmountVnd = formatVnd(50_000L),
-                bankName = "Ngân hàng Quân đội (MB)",
-                bankCode = "MB",
-                accountNumber = "0345678999",
-                accountHolder = "UNISHARE SYSTEM"
+                formattedAmountVnd = formatVnd(50_000L)
             ),
             BuyerTransactionDetailUiModel(
                 orderId = "ord_buyer1_002",
@@ -119,11 +115,7 @@ class FakeBuyerTransactionsRepository(
                 expiresAtUtc = now.plusSeconds(600).toString(),
                 formattedCreatedAt = formatIsoToVn(now.minusSeconds(300).toString(), zoneVn),
                 formattedExpiresAt = formatIsoToVn(now.plusSeconds(600).toString(), zoneVn),
-                formattedAmountVnd = formatVnd(35_000L),
-                bankName = "Ngân hàng Quân đội (MB)",
-                bankCode = "MB",
-                accountNumber = "0345678999",
-                accountHolder = "UNISHARE SYSTEM"
+                formattedAmountVnd = formatVnd(35_000L)
             ),
             BuyerTransactionDetailUiModel(
                 orderId = "ord_buyer1_003",
@@ -136,11 +128,7 @@ class FakeBuyerTransactionsRepository(
                 expiresAtUtc = now.minusSeconds(85500).toString(),
                 formattedCreatedAt = formatIsoToVn(now.minusSeconds(86400).toString(), zoneVn),
                 formattedExpiresAt = formatIsoToVn(now.minusSeconds(85500).toString(), zoneVn),
-                formattedAmountVnd = formatVnd(40_000L),
-                bankName = "Ngân hàng Quân đội (MB)",
-                bankCode = "MB",
-                accountNumber = "0345678999",
-                accountHolder = "UNISHARE SYSTEM"
+                formattedAmountVnd = formatVnd(40_000L)
             ),
             BuyerTransactionDetailUiModel(
                 orderId = "ord_buyer1_004",
@@ -153,11 +141,7 @@ class FakeBuyerTransactionsRepository(
                 expiresAtUtc = now.minusSeconds(171900).toString(),
                 formattedCreatedAt = formatIsoToVn(now.minusSeconds(172800).toString(), zoneVn),
                 formattedExpiresAt = formatIsoToVn(now.minusSeconds(171900).toString(), zoneVn),
-                formattedAmountVnd = formatVnd(45_000L),
-                bankName = "Ngân hàng Quân đội (MB)",
-                bankCode = "MB",
-                accountNumber = "0345678999",
-                accountHolder = "UNISHARE SYSTEM"
+                formattedAmountVnd = formatVnd(45_000L)
             )
         )
 
@@ -174,11 +158,7 @@ class FakeBuyerTransactionsRepository(
                 expiresAtUtc = now.minusSeconds(2700).toString(),
                 formattedCreatedAt = formatIsoToVn(now.minusSeconds(3600).toString(), zoneVn),
                 formattedExpiresAt = formatIsoToVn(now.minusSeconds(2700).toString(), zoneVn),
-                formattedAmountVnd = formatVnd(60_000L),
-                bankName = "Ngân hàng Quân đội (MB)",
-                bankCode = "MB",
-                accountNumber = "0345678999",
-                accountHolder = "UNISHARE SYSTEM"
+                formattedAmountVnd = formatVnd(60_000L)
             )
         )
 

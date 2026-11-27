@@ -288,17 +288,6 @@ private fun ReceiptCard(detail: BuyerTransactionDetailUiModel) {
                 ReceiptRow(label = "Hạn thanh toán", value = detail.formattedExpiresAt, testTag = "text_detail_expires_at")
             }
 
-            // Thông tin ngân hàng / phương thức chuyển khoản
-            if (!detail.bankName.isNullOrBlank()) {
-                ReceiptRow(label = "Ngân hàng thụ hưởng", value = detail.bankName, testTag = "text_detail_bank_name")
-            }
-            if (!detail.accountNumber.isNullOrBlank()) {
-                ReceiptRow(label = "Số tài khoản nhận", value = detail.accountNumber, testTag = "text_detail_account_number")
-            }
-            if (!detail.accountHolder.isNullOrBlank()) {
-                ReceiptRow(label = "Chủ tài khoản nhận", value = detail.accountHolder, testTag = "text_detail_account_holder")
-            }
-
             HorizontalDivider(color = CardBorderColor)
 
             // Chú thích từ chối trách nhiệm hóa đơn tài chính theo yêu cầu Issue B05

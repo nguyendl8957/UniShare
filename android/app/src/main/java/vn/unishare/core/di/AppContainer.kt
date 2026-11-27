@@ -7,6 +7,8 @@ import vn.unishare.data.firebase.FirestoreProfileRepository
 import vn.unishare.data.remote.OrderApiAdapter
 import vn.unishare.domain.repository.AuthRepository
 import vn.unishare.domain.repository.ProfileRepository
+import vn.unishare.feature.payment.history.BuyerTransactionsRepository
+import vn.unishare.feature.payment.history.FakeBuyerTransactionsRepository
 import vn.unishare.feature.payment.ui.ApiOrderRepository
 import vn.unishare.feature.payment.ui.OrderRepository
 
@@ -40,5 +42,13 @@ class AppContainer {
                 apiBaseUrl = apiBaseUrl
             )
         )
+    }
+
+    /**
+     * B05 Buyer Transactions: Tạm dùng FakeBuyerTransactionsRepository với dữ liệu
+     * hai Buyer mẫu trong lúc chờ Leader bàn giao backend GET /v1/me/orders và adapter thật.
+     */
+    fun createBuyerTransactionsRepository(): BuyerTransactionsRepository {
+        return FakeBuyerTransactionsRepository()
     }
 }
