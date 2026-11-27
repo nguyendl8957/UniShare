@@ -51,6 +51,8 @@ manageRouter.patch(
       const result = await db.runTransaction(async (transaction) => {
         const documentSnapshot =
           await transaction.get(documentRef);
+        const catalogSnapshot =
+          await transaction.get(catalogRef);
 
         if (!documentSnapshot.exists) {
           return "NOT_FOUND";
@@ -68,7 +70,10 @@ manageRouter.patch(
 
         if (action === "unarchive") {
           if (document.status === "PUBLISHED") {
-            return "ALREADY_PUBLISHED";
+            return catalogSnapshot.exists &&
+              catalogSnapshot.data()?.sellerId === uid
+              ? "ALREADY_PUBLISHED"
+              : "CATALOG_CONFLICT";
           }
 
           if (document.status !== "ARCHIVED") {
@@ -80,7 +85,6 @@ manageRouter.patch(
             .doc(expectedVersionId);
 
           const versionSnapshot = await transaction.get(versionRef);
-          const catalogSnapshot = await transaction.get(catalogRef);
 
           if (catalogSnapshot.exists) {
             return "CATALOG_CONFLICT";
@@ -145,6 +149,14 @@ manageRouter.patch(
 
         if (document.status !== "PUBLISHED") {
           return "INVALID_STATUS";
+        }
+
+        // A published document must have its matching public listing.
+        if (
+          !catalogSnapshot.exists ||
+          catalogSnapshot.data()?.sellerId !== uid
+        ) {
+          return "CATALOG_CONFLICT";
         }
 
         // Atomic Firestore transaction:
