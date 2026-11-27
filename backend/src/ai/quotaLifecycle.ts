@@ -19,7 +19,7 @@ type BeginKind =
   | "PAYLOAD_MISMATCH"
   | "QUOTA_EXCEEDED";
 
-export type BeginResult = { kind: BeginKind };
+export type BeginResult = { kind: BeginKind; dayUtc?: string };
 
 export type FinishResult = {
   kind: "FINALIZED" | "ALREADY_FINALIZED" | "NOT_FOUND";
@@ -129,7 +129,19 @@ export async function beginAiRequest(
       const state = existing.get("state");
 
       if (state === "SUCCEEDED") {
-        return { kind: "COMPLETED" } as const;
+        const originalDayUtc = existing.get("dayUtc");
+
+        if (
+          typeof originalDayUtc !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(originalDayUtc)
+        ) {
+          throw new Error("Invalid original AI reservation day");
+        }
+
+        return {
+          kind: "COMPLETED",
+          dayUtc: originalDayUtc
+        } as const;
       }
 
       if (state === "RESERVED") {
