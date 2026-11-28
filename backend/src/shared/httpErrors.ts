@@ -13,13 +13,14 @@ export function sendApiError(
   res: Response,
   status: number,
   code: ApiErrorCode,
-  message: string
+  message: string,
+  requestId = randomUUID()
 ): void {
   res.status(status).json({
     error: {
       code,
       message,
-      requestId: randomUUID()
+      requestId
     }
   });
 }

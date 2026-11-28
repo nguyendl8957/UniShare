@@ -4,7 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
 internal const val PDF_HEADER_PROBE_BYTES = 1024
-private val pdfHeader = Regex("^(?:\\u00EF\\u00BB\\u00BF)?[\\u0000\\t\\n\\u000C\\r ]*%PDF-(?:1\\.[0-7]|2\\.0)[\\r\\n]")
+private val pdfHeader = Regex("%PDF-(?:1\\.[0-7]|2\\.0)(?![0-9.])")
 
 internal fun hasPdfHeader(bytes: ByteArray): Boolean =
     pdfHeader.containsMatchIn(String(bytes, 0, minOf(bytes.size, PDF_HEADER_PROBE_BYTES), Charsets.ISO_8859_1))

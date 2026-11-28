@@ -1,6 +1,19 @@
 package vn.unishare.feature.explore.ui
 
 import android.os.SystemClock
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import vn.unishare.data.remote.readAtMost
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.Source
@@ -18,6 +31,7 @@ import kotlinx.coroutines.tasks.await
  * No mock sellers, review ratings, or sales numbers.
  */
 class FirestoreExploreCatalogRepository(
+    private val apiBaseUrl: String,
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) : ExploreCatalogRepository {
 
@@ -25,10 +39,16 @@ class FirestoreExploreCatalogRepository(
     private var loadedAt: Long? = null
     private var lastQuery: CatalogQuery? = null
     private var lastQueryItems = emptyList<ExploreDocumentItem>()
+    private val sellerNames = mutableMapOf<String, CachedSellerName>()
+    private val sellerNamesLock = Mutex()
+    private val refreshSellerNames = AtomicBoolean()
+
+    private data class CachedSellerName(val name: String?, val expiresAt: Long)
 
     override fun invalidate() {
         loadedAt = null
         lastQuery = null
+        refreshSellerNames.set(true)
     }
 
     private suspend fun fetchCatalog(): List<ExploreDocumentItem> {
@@ -155,7 +175,52 @@ class FirestoreExploreCatalogRepository(
         val size = query.pageSize.coerceIn(1, 20)
         val items = sorted.drop(offset).take(size)
         val end = offset + items.size
-        CatalogPage(items, sorted.size, if (end < sorted.size) "offset:$end" else null)
+        CatalogPage(withSellerNames(items), sorted.size, if (end < sorted.size) "offset:$end" else null)
+    }
+
+    private suspend fun withSellerNames(items: List<ExploreDocumentItem>): List<ExploreDocumentItem> {
+        if (items.isEmpty()) return items
+        val ids = items.map { it.seller.sellerId }.distinct().filter { SELLER_ID.matches(it) }
+        val names = sellerNamesLock.withLock {
+            if (refreshSellerNames.getAndSet(false)) sellerNames.clear()
+            val now = SystemClock.elapsedRealtime()
+            sellerNames.entries.removeAll { it.value.expiresAt <= now }
+            ids.filterNot(sellerNames::containsKey).chunked(5).forEach { group ->
+                val results = coroutineScope { group.map { id -> async { id to fetchSellerName(id) } }.awaitAll() }
+                for ((id, name) in results) {
+                    val ttl = if (name == null) 5_000L else 30_000L
+                    sellerNames[id] = CachedSellerName(name, SystemClock.elapsedRealtime() + ttl)
+                }
+            }
+            ids.associateWith { sellerNames[it]?.name }
+        }
+        return items.map { item ->
+            val name = names[item.seller.sellerId] ?: return@map item
+            item.copy(seller = item.seller.copy(displayName = name))
+        }
+    }
+
+    private suspend fun fetchSellerName(sellerId: String): String? = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
+        try {
+            connection = URL("${apiBaseUrl.trimEnd('/')}/v1/seller/$sellerId/public-profile?summary=name")
+                .openConnection() as HttpURLConnection
+            connection.connectTimeout = 2_500
+            connection.readTimeout = 2_500
+            connection.instanceFollowRedirects = false
+            if (connection.responseCode != 200) return@withContext null
+            val body = connection.inputStream.use { JSONObject(String(it.readAtMost(4096), Charsets.UTF_8)) }
+            if (body.optString("sellerId") != sellerId) return@withContext null
+            (body.opt("displayName") as? String)?.trim()?.takeIf {
+                it.isNotEmpty() && it != sellerId && '@' !in it
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection?.disconnect()
+        }
     }
 
     private suspend fun queryItems(query: CatalogQuery): List<ExploreDocumentItem> {
@@ -218,7 +283,8 @@ class FirestoreExploreCatalogRepository(
 
         if (!snapshot.exists()) return@runCatching null
 
-        val item = toItem(snapshot) ?: return@runCatching null
+        val raw = toItem(snapshot) ?: return@runCatching null
+        val item = withSellerNames(listOf(raw)).single()
 
         DocumentPublicDetail(
             docId = item.docId,
@@ -237,5 +303,9 @@ class FirestoreExploreCatalogRepository(
             // require a separate rules-aware image loader.
             previewRefs = readPreviewRefs(snapshot)
         )
+    }
+
+    private companion object {
+        val SELLER_ID = Regex("^[A-Za-z0-9_-]{1,150}$")
     }
 }

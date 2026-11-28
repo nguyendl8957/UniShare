@@ -151,6 +151,7 @@ test("A04 publish integration", async (t) => {
 
   const validPdf = await createValidPdf();
   const pdfCases = [
+    { name: "empty file", bytes: Buffer.alloc(0), mime: "application/pdf", code: "INVALID_REQUEST" },
     { name: "renamed text file", bytes: Buffer.from("Not a PDF"), mime: "application/pdf", code: "INVALID_PDF" },
     { name: "truncated PDF", bytes: validPdf.subarray(0, -10), mime: "application/pdf", code: "INVALID_PDF" },
     { name: "invalid PDF structure", bytes: Buffer.from("%PDF-1.7\n%%EOF"), mime: "application/pdf", code: "INVALID_PDF" },
@@ -176,7 +177,8 @@ test("A04 publish integration", async (t) => {
   }
 
   const multiPagePdf = Buffer.concat([
-    Buffer.from([0xef, 0xbb, 0xbf, 0x0d, 0x0a]),
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    Buffer.from("% export preamble\n"),
     await createValidPdf(2)
   ]);
   await pdfFile.save(multiPagePdf, { metadata: { contentType: "application/pdf" } });

@@ -22,7 +22,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import vn.unishare.data.repository.InvalidSelectedPdfException
 import vn.unishare.data.remote.PDF_HEADER_PROBE_BYTES
-import vn.unishare.data.remote.hasPdfHeader
+import android.os.SystemClock
+import android.util.Log
 import vn.unishare.data.remote.readAtMost
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -152,14 +153,17 @@ fun UploadWizardScreen(
             pdfCheck?.cancel()
             pdfCheck = scope.launch {
                 viewModel.clearPdfFile()
+                val started = SystemClock.elapsedRealtime()
                 try {
                     val selected = withContext(Dispatchers.IO) { resolveSelectedPdfFile(context, uri) }
                     viewModel.selectPdfFile(selected)
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: InvalidSelectedPdfException) {
+                    Log.w("UniShareUpload", "stage=PDF_SELECTION exception=${error.javaClass.simpleName} durationMs=${SystemClock.elapsedRealtime() - started}")
                     viewModel.rejectSelectedPdf(error.message.orEmpty())
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    Log.w("UniShareUpload", "stage=PDF_SELECTION exception=${error.javaClass.simpleName} durationMs=${SystemClock.elapsedRealtime() - started}")
                     viewModel.rejectSelectedPdf("Chưa đọc được tệp PDF. Vui lòng chọn lại tài liệu.")
                 }
             }
@@ -173,7 +177,7 @@ fun UploadWizardScreen(
     }
     val launchCameraCapture: () -> Unit = onCapturePreviewImageOverride ?: launchImagePicker
     val launchPdfPicker: () -> Unit = onPickPdfOverride ?: {
-        pdfPickerLauncher.launch(arrayOf(ALLOWED_PDF_MIME))
+        pdfPickerLauncher.launch(arrayOf(ALLOWED_PDF_MIME, "application/octet-stream"))
     }
 
     val requestClose = {
@@ -1752,10 +1756,6 @@ private fun resolveSelectedPreviewImage(context: Context, uri: Uri): SelectedPre
 
 private fun resolveSelectedPdfFile(context: Context, uri: Uri): SelectedPdfFile {
     val resolver = context.contentResolver
-    val reportedType = resolver.getType(uri)?.lowercase()
-    if (reportedType != null && reportedType != ALLOWED_PDF_MIME && reportedType != "application/octet-stream") {
-        throw InvalidSelectedPdfException()
-    }
     var name = "tai_lieu.pdf"
     var size: Long? = null
     resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
@@ -1772,7 +1772,9 @@ private fun resolveSelectedPdfFile(context: Context, uri: Uri): SelectedPdfFile 
     if (reportedSize != null && reportedSize > MAX_PDF_BYTES) throw InvalidSelectedPdfException(sizeError)
     val actualSize = resolver.openInputStream(uri)?.use { input ->
         val header = input.readAtMost(PDF_HEADER_PROBE_BYTES)
-        if (!hasPdfHeader(header)) throw InvalidSelectedPdfException()
+        if (!String(header, Charsets.ISO_8859_1).contains("%PDF-")) {
+            throw InvalidSelectedPdfException()
+        }
         if (reportedSize != null && reportedSize > 0) {
             reportedSize
         } else {

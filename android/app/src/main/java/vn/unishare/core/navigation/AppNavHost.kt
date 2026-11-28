@@ -87,7 +87,7 @@ fun AppNavHost(container: AppContainer) {
 
     val exploreViewModel: ExploreViewModel = viewModel(factory = viewModelFactory {
         initializer {
-            ExploreViewModel(catalogRepository = FirestoreExploreCatalogRepository(), typingDelayMillis = 250)
+            ExploreViewModel(catalogRepository = FirestoreExploreCatalogRepository(apiBaseUrl = API_URL), typingDelayMillis = 250)
         }
     })
     val profileViewModel: ProfileViewModel = viewModel(factory = viewModelFactory {

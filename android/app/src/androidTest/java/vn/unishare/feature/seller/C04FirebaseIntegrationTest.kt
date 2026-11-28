@@ -5,7 +5,9 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.accessibility.AccessibilityNodeInfo
@@ -30,6 +32,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Rule
@@ -39,6 +42,8 @@ import vn.unishare.saveRegressionScreenshot
 import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import vn.unishare.data.repository.DocumentUploadRepositoryImpl
+import vn.unishare.feature.explore.ui.CatalogQuery
+import vn.unishare.feature.explore.ui.FirestoreExploreCatalogRepository
 import vn.unishare.feature.seller.ui.A04SellerRepositoryAdapter
 import vn.unishare.feature.seller.ui.SelectedPreviewImage
 import vn.unishare.feature.seller.ui.SellerDocumentStatus
@@ -48,6 +53,8 @@ import vn.unishare.feature.seller.ui.UploadWizardScreen
 import vn.unishare.feature.seller.ui.UploadWizardViewModel
 import java.io.File
 import java.io.FileOutputStream
+import java.util.Locale
+import java.util.Random
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
@@ -57,7 +64,70 @@ class C04FirebaseIntegrationTest {
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
-    fun wizardPublishesAndArchivesUsingRealA04() {
+    fun wizardPublishesAndArchivesUsingRealA04() = publishFromPicker()
+
+    @Test
+    fun wizardPublishes32KiBPdfWithPrefixAndGenericMetadata() = publishFromPicker(32 * 1024)
+
+    @Test
+    fun wizardPublishes24MiBScan() = publishFromPicker(24 * 1024 * 1024)
+
+    @Test
+    fun wizardPublishesScanNear25MiBLimit() = publishFromPicker(25 * 1024 * 1024)
+
+    @Test
+    fun legacyCatalogNamesAreSharedBySellerAndRefreshAfterRename() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val app = FirebaseApp.initializeApp(
+            context,
+            FirebaseOptions.Builder()
+                .setApplicationId("1:1234567890:android:c04catalog")
+                .setApiKey("demo-key")
+                .setProjectId("demo-unishare")
+                .build(),
+            "c04-catalog-${UUID.randomUUID()}"
+        )
+        val auth = FirebaseAuth.getInstance(app)
+        val db = FirebaseFirestore.getInstance(app)
+        auth.useEmulator("127.0.0.1", 9099)
+        db.useEmulator("127.0.0.1", 8080)
+        val repo = FirestoreExploreCatalogRepository("http://127.0.0.1:3000", db)
+        val query = CatalogQuery(normalizedPrefix = "c04 legacy")
+
+        suspend fun names() = repo.queryCatalog(query).getOrThrow().items
+            .associate { it.docId to it.seller.displayName }
+
+        try {
+            assertNull(auth.currentUser)
+            assertEquals(mapOf(
+                "c04_legacy_first" to "A04 Smoke Seller",
+                "c04_legacy_second" to "A04 Smoke Seller",
+                "c04_legacy_other" to "Lê Bảo Ngọc"
+            ), names())
+            val fallback = FirestoreExploreCatalogRepository("http://127.0.0.1:1", db)
+            assertTrue(fallback.queryCatalog(query).getOrThrow().items.all { it.seller.displayName == "Người bán" })
+
+            val user = auth.signInWithEmailAndPassword(
+                "a04-seller-smoke@example.test", "EmulatorOnly_12345!"
+            ).await().user ?: error("Missing test Seller")
+            val profile = db.collection("users").document(user.uid)
+            profile.update("displayName", "Nguyễn Ánh Dương").await()
+            try {
+                assertEquals("A04 Smoke Seller", repo.getDocumentDetail("c04_legacy_second").getOrThrow()?.seller?.displayName)
+                repo.invalidate()
+                val updated = names()
+                assertEquals("Nguyễn Ánh Dương", updated["c04_legacy_first"])
+                assertEquals("Nguyễn Ánh Dương", updated["c04_legacy_second"])
+                assertEquals("Lê Bảo Ngọc", updated["c04_legacy_other"])
+            } finally {
+                profile.update("displayName", "A04 Smoke Seller").await()
+            }
+        } finally {
+            auth.signOut()
+        }
+    }
+
+    private fun publishFromPicker(targetBytes: Int? = null) {
         val context = InstrumentationRegistry
             .getInstrumentation()
             .targetContext
@@ -99,13 +169,18 @@ class C04FirebaseIntegrationTest {
             apiBaseUrl = "http://127.0.0.1:3000"
         )
 
-        val pdfFile = createPdf(context.cacheDir)
+        val genericMetadata = targetBytes == 32 * 1024
+        val pdfFile = if (targetBytes == null) createPdf(context.cacheDir)
+            else createScanPdf(context.cacheDir, targetBytes, genericMetadata)
+        assertTrue(pdfFile.length() in 1..25L * 1024 * 1024)
+        if (targetBytes != null) assertTrue(pdfFile.length() >= targetBytes - 8 * 1024)
+        assertPdfRenders(pdfFile)
         val resolver = context.contentResolver
         val downloadUri = requireNotNull(resolver.insert(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, pdfFile.name)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                put(MediaStore.MediaColumns.MIME_TYPE, if (genericMetadata) "application/octet-stream" else "application/pdf")
             }
         ))
         requireNotNull(resolver.openOutputStream(downloadUri)).use { output ->
@@ -208,6 +283,7 @@ class C04FirebaseIntegrationTest {
             composeRule.onNodeWithTag("checkbox_ownership_consent")
                 .performScrollTo().performClick()
 
+            val publishStarted = SystemClock.elapsedRealtime()
             composeRule.onNodeWithTag("btn_publish_document")
                 .performScrollTo().performClick()
 
@@ -226,6 +302,7 @@ class C04FirebaseIntegrationTest {
             }
 
             assertTrue(state is UploadPublishState.Published)
+            println("C04 published bytes=${pdfFile.length()} durationMs=${SystemClock.elapsedRealtime() - publishStarted}")
 
             val doc = (state as UploadPublishState.Published).document
             val catalogRef = firestore.collection("catalog").document(doc.docId)
@@ -237,6 +314,9 @@ class C04FirebaseIntegrationTest {
             assertEquals("programming", catalog.getString("subjectId"))
             assertEquals("note", catalog.getString("categoryId"))
             assertEquals(20000L, catalog.getLong("priceVnd"))
+            val repo = FirestoreExploreCatalogRepository("http://127.0.0.1:3000", firestore)
+            val detail = runBlocking { repo.getDocumentDetail(doc.docId).getOrThrow() }
+            assertEquals("A04 Smoke Seller", detail?.seller?.displayName)
             composeRule.waitUntil(15_000) {
                 val listing = viewModel.documentsState.value.listState as? SellerDocumentsListState.Content
                 listing?.items?.any { it.docId == doc.docId && it.title == title } == true
@@ -281,6 +361,73 @@ class C04FirebaseIntegrationTest {
             findPickerItem(child, label)?.let { return it }
         }
         return null
+    }
+
+    private fun assertPdfRenders(file: File) {
+        val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        PdfRenderer(fd).use { renderer ->
+            assertEquals(2, renderer.pageCount)
+            renderer.openPage(0).use { page ->
+                val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+                try {
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+        }
+    }
+
+    private fun createScanPdf(directory: File, targetBytes: Int, genericMetadata: Boolean): File {
+        val extension = if (genericMetadata) "bin" else "pdf"
+        val file = File(directory, "c04-scan-${UUID.randomUUID()}.$extension")
+        val width = if (targetBytes < 100_000) 96 else 1024
+        val row = ByteArray(width * 3)
+        val height = (targetBytes - 2048) / row.size
+        val objects = mutableListOf<Int>()
+        var offset = 0
+        file.outputStream().buffered().use { output ->
+            fun text(value: String) {
+                val bytes = value.toByteArray(Charsets.US_ASCII)
+                output.write(bytes)
+                offset += bytes.size
+            }
+            fun startObject() {
+                objects += offset
+                text("${objects.size} 0 obj\n")
+            }
+
+            if (genericMetadata) text("% Exported PDF fixture\n")
+            text("%PDF-1.7 \n")
+            startObject()
+            text("<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+            startObject()
+            text("<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n")
+            repeat(2) {
+                startObject()
+                text("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 600] " +
+                    "/Resources << /XObject << /Scan 5 0 R >> >> /Contents 6 0 R >>\nendobj\n")
+            }
+            startObject()
+            text("<< /Type /XObject /Subtype /Image /Width $width /Height $height " +
+                "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ${row.size * height} >>\nstream\n")
+            val random = Random(41)
+            repeat(height) {
+                random.nextBytes(row)
+                output.write(row)
+                offset += row.size
+            }
+            text("\nendstream\nendobj\n")
+            startObject()
+            val commands = "q 360 0 0 520 20 40 cm /Scan Do Q\n"
+            text("<< /Length ${commands.length} >>\nstream\n${commands}endstream\nendobj\n")
+
+            val xref = offset
+            text("xref\n0 ${objects.size + 1}\n0000000000 65535 f \n")
+            for (objectOffset in objects) text(String.format(Locale.ROOT, "%010d 00000 n \n", objectOffset))
+            text("trailer\n<< /Size ${objects.size + 1} /Root 1 0 R >>\nstartxref\n$xref\n%%EOF\n")
+        }
+        return file
     }
 
     private fun createPdf(directory: File): File {

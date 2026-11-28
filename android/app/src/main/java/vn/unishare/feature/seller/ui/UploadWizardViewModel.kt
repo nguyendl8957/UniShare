@@ -117,8 +117,7 @@ class UploadWizardViewModel(
 
     fun selectPdfFile(pdf: SelectedPdfFile) {
         val normalizedMime = pdf.mimeType.trim().lowercase()
-        val hasPdfExtension = pdf.displayName.trim().lowercase().endsWith(".pdf")
-        if (normalizedMime != ALLOWED_PDF_MIME || !hasPdfExtension) {
+        if (normalizedMime != ALLOWED_PDF_MIME) {
             setPdfError("Tệp không hợp lệ. Vui lòng chọn đúng định dạng PDF (.pdf).")
             return
         }

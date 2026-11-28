@@ -1,4 +1,4 @@
-const PDF_HEADER = /^(?:\xEF\xBB\xBF)?[\x00\t\n\f\r ]*%PDF-(?:1\.[0-7]|2\.0)[\r\n]/;
+const PDF_HEADER = /%PDF-(?:1\.[0-7]|2\.0)(?![0-9.])/;
 const PDF_EOF = /%%EOF[\x00\t\n\f\r ]*$/;
 
 export function hasPdfHeader(bytes: Buffer): boolean {

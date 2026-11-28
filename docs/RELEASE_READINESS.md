@@ -232,3 +232,49 @@ Các tệp mới
 - `backend/src/documents/pdfValidation.ts` chứa kiểm tra header dùng chung cho publish, Reader và AI, cùng kiểm tra dấu kết thúc cho publish.
 - `android/app/src/main/res/drawable/ic_seller_empty_illustration.xml` có màu Seller ở từng nét và mảng của vector.
 - `android/app/src/androidTest/java/vn/unishare/RegressionScreenshot.kt` chỉ chụp fixture trên emulator khi test runner yêu cầu.
+
+## Nghiệm thu lần 3 — Đăng bán PDF và tên Seller
+
+### Đăng bán PDF
+
+- Trên revision `api-00010-vas`, ba request publish HTTP 500 kết thúc sau 11,91–20,18 giây và trùng cảnh báo hết RAM trên chính instance xử lý. Cloud Run ghi mức sử dụng đến 278 MiB, vượt mức cấu hình 256 MiB. Thiếu request ID và hai tệp gốc để đối chiếu từng trường hợp.
+- Android kiểm tra sơ bộ chữ ký và dung lượng từ Content URI. Backend kiểm tra MIME staging, generation, dung lượng, header, EOF và cấu trúc PDF. Header có phần đệm được nhận diện trong 1.024 byte đầu. [PDF Reference của Adobe](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.5_v6.pdf)
+- Android đối chiếu checksum Storage khi upload mới có metadata phù hợp và dùng SHA-256 theo luồng khi phục hồi. Backend đọc staging theo generation vào một buffer giới hạn, xác minh CRC32C khi ghi bản riêng tư, dùng SHA-256 theo luồng khi tái sử dụng đích đã tồn tại, và giữ precondition tạo mới. Cấu hình Function tăng lên 512 MiB. Log `UniShareUpload` và `publish_failed` giúp nối giai đoạn, mã lỗi và request ID. [Checksum của Cloud Storage](https://docs.cloud.google.com/storage/docs/data-validation)
+
+Bốn mẫu đã được mở và render bằng Android PdfRenderer, rồi chọn qua Document Picker thật, upload preview và PDF, publish, xuất hiện trong Catalog và Seller Management trên môi trường demo.
+
+| Mẫu | Byte | Từ bấm Đăng bán | API publish local |
+| --- | ---: | ---: | ---: |
+| PDF hai trang do Android xuất | 11.780 | 1.482 ms | 135 ms |
+| PDF scan có phần đệm đầu và MIME chung | 31.372 | 1.505 ms | 124 ms |
+| PDF scan khoảng 24 MiB | 25.163.582 | 5.300 ms | 1.335 ms |
+| PDF scan gần 25 MiB | 26.211.134 | 3.989 ms | 856 ms |
+
+Tiến trình Node local đạt đỉnh working set 185,5 MiB trong lượt Android dùng Firebase Emulator. Cần nghiệm thu mức RAM của revision Cloud Run mới sau khi triển khai.
+
+PDF rỗng, giả, hỏng và quá giới hạn bị từ chối trong test backend. Hai PDF gốc và lần publish trên điện thoại thật là **NOT VERIFIED**.
+
+### Tên Seller
+
+Catalog dùng `sellerId` để lấy tên từ chế độ `summary=name` của API hồ sơ công khai. Backend chỉ lấy hai trường cần cho việc kiểm tra Seller và trả tên. Android dùng cache chung theo Seller, làm mới theo TTL hoặc khi refresh Catalog, và dùng tên đó cho card và chi tiết. Test đã qua với Guest, hai Seller khác nhau, nhiều card cùng Seller, tên có dấu, đổi tên và API tên bị gián đoạn. Catalog cũ dùng cùng cơ chế, không cần migration hay chỉnh Rules.
+
+### Build, test và phạm vi Git
+
+- APK Debug đã build và xác minh chữ ký. Android unit test 93/93 và instrumentation liên quan 18/18. Backend typecheck, build và 134/134 test local đạt. Firebase Rules đạt 43/43.
+- SHA-256 APK Debug `6B4B9C9E0BD9D4F7878BE220E347BB97D346A0B6F1562E302D8623BD50047B3F`. Git ghi nhận 16 tệp code/test và phần báo cáo trong tệp này.
+- PDF và upload. `UploadWizardScreen.kt`, `UploadWizardViewModel.kt`, `DocumentUploadRepositoryImpl.kt`, `ResponseBody.kt`, `publish.ts`, `pdfValidation.ts`, `httpErrors.ts` và cấu hình RAM trong `functions.ts`.
+- Tên Seller. `FirestoreExploreCatalogRepository.kt`, `DocumentDetailScreen.kt`, `AppNavHost.kt` và `publicProfile.ts`.
+- Test và dữ liệu demo. `C04FirebaseIntegrationTest.kt`, `documentPublish.test.ts`, `phase1SellerLifecycle.test.ts` và `seedAndroidSeller.cjs`.
+
+### Triển khai và nghiệm thu
+
+Sau khi duyệt diff, chạy từ thư mục gốc UniShare.
+
+```powershell
+npm --prefix backend run build
+if ($LASTEXITCODE -eq 0) {
+    firebase deploy --only functions:api --project unishare-db44a
+}
+```
+
+Kiểm tra revision mới và cấu hình 512 MiB. Cài APK Debug rồi đăng một PDF thật khoảng 32 KB và một PDF gần 25 MiB. Xác nhận danh sách Quản lý và Catalog, tên đúng ở Trang chủ, Khám phá và chi tiết, rồi đổi tên Seller và tải lại. Nếu publish thất bại, giữ request ID từ log `UniShareUpload`.

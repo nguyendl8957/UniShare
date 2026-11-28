@@ -691,12 +691,7 @@ private fun SellerPublicCard(
 
     val profile = profileResult?.getOrNull()
 
-    val sellerName = when {
-        profileResult == null -> "Đang tải người bán..."
-        profileResult?.isFailure == true -> "Không tải được hồ sơ"
-        profile == null -> "Không tìm thấy người bán"
-        else -> profile.displayName.ifBlank { "Người bán chưa cập nhật" }
-    }
+    val sellerName = seller.displayName.ifBlank { "Người bán" }
 
     val sellerSchool = when {
         profileResult == null -> "Đang tải..."

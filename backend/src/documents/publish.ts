@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { PDFDocument } from "pdf-lib";
@@ -131,7 +131,8 @@ async function verifyStagingFile(
   destinationPath: string,
   generation: string,
   type: "pdf" | "image",
-  extension?: string
+  extension?: string,
+  onSize?: (size: number) => void
 ): Promise<VerifiedFile> {
   const file = getStorage()
     .bucket(bucketName)
@@ -163,15 +164,21 @@ async function verifyStagingFile(
         ? "image/png"
         : "image/jpeg";
 
+  onSize?.(size);
+
   if (metadata.contentType !== contentType) {
     throw new PublishConflict("Invalid file MIME");
   }
 
-  const [bytes] = await file.bucket.file(sourcePath, { generation }).download();
-
-  if (bytes.length !== size || bytes.length > maxBytes) {
-    throw new PublishConflict("File size mismatch");
+  const bytes = Buffer.allocUnsafe(size);
+  let offset = 0;
+  const source = file.bucket.file(sourcePath, { generation });
+  for await (const chunk of source.createReadStream()) {
+    if (offset + chunk.length > size) throw new PublishConflict("File size mismatch");
+    chunk.copy(bytes, offset);
+    offset += chunk.length;
   }
+  if (offset !== size) throw new PublishConflict("File size mismatch");
 
   if (type === "pdf") {
     if (!hasPdfHeader(bytes)) {
@@ -245,26 +252,26 @@ async function saveVerifiedFile(
     .file(verified.destinationPath);
 
   const verifyExisting = async (): Promise<string> => {
-    const [exists] = await destination.exists();
-
-    if (!exists) {
-      throw new Error("Destination does not exist");
-    }
-
     const [metadata] = await destination.getMetadata();
-    const [existingBytes] = await destination.download();
-
-    if (
-      existingBytes.length !== verified.bytes.length ||
-      sha256(existingBytes) !== verified.sha256 ||
-      metadata.contentType !== verified.contentType
-    ) {
-      throw new PublishConflict(
-        "Destination exists with different content"
-      );
+    const generation = String(metadata.generation);
+    if (!validGeneration(generation) ||
+        Number(metadata.size) !== verified.bytes.length ||
+        metadata.contentType !== verified.contentType) {
+      throw new PublishConflict("Destination exists with different content");
     }
 
-    return String(metadata.generation);
+    const digest = createHash("sha256");
+    let size = 0;
+    const exact = destination.bucket.file(destination.name, { generation });
+    for await (const chunk of exact.createReadStream()) {
+      size += chunk.length;
+      if (size > verified.bytes.length) throw new PublishConflict("Destination file size mismatch");
+      digest.update(chunk);
+    }
+    if (size !== verified.bytes.length || digest.digest("hex") !== verified.sha256) {
+      throw new PublishConflict("Destination exists with different content");
+    }
+    return generation;
   };
 
   const [alreadyExists] = await destination.exists();
@@ -278,6 +285,7 @@ async function saveVerifiedFile(
   try {
     await destination.save(verified.bytes, {
       resumable: false,
+      validation: "crc32c",
       metadata: {
         contentType: verified.contentType,
         metadata: {
@@ -303,8 +311,16 @@ async function saveVerifiedFile(
     return { ...verified, destinationGeneration };
   }
 
-  const destinationGeneration = await verifyExisting();
-
+  // The Storage SDK verified the upload checksum. Retain the returned generation.
+  const writtenGeneration = destination.metadata.generation;
+  const [metadata] = await destination.getMetadata();
+  const destinationGeneration = String(metadata.generation);
+  if (!validGeneration(destinationGeneration) ||
+      Number(metadata.size) !== verified.bytes.length ||
+      metadata.contentType !== verified.contentType ||
+      (writtenGeneration && String(writtenGeneration) !== destinationGeneration)) {
+    throw new PublishConflict("Destination metadata mismatch");
+  }
   return { ...verified, destinationGeneration };
 }
 
@@ -332,6 +348,10 @@ publishRouter.post(
       return;
     }
 
+    const requestId = randomUUID();
+    const startedAt = Date.now();
+    let stage = "CHECK_DRAFT";
+    let pdfSizeBytes: number | undefined;
     try {
       const db = getFirestore();
       const documentRef = db.collection("documents").doc(docId);
@@ -388,12 +408,15 @@ publishRouter.post(
       const prefix =
         `staging/${uid}/${docId}/${input.versionId}`;
 
+      stage = "VERIFY_STAGING";
       const pdf = await verifyStagingFile(
         bucketName,
         `${prefix}/pdf/source.pdf`,
         `private/${docId}/${input.versionId}/source.pdf`,
         input.pdfGeneration,
-        "pdf"
+        "pdf",
+        undefined,
+        size => { pdfSizeBytes = size; }
       );
 
       const previews: VerifiedFile[] = [];
@@ -413,6 +436,7 @@ publishRouter.post(
 
       // If a previous attempt copied some files, verify
       // their bytes and resume instead of overwriting.
+      stage = "VERIFY_DESTINATION";
       const savedPdf = await saveVerifiedFile(bucketName, pdf);
 
       const savedPreviews: SavedFile[] = [];
@@ -433,6 +457,7 @@ publishRouter.post(
 
       const catalogRef = db.collection("catalog").doc(docId);
 
+      stage = "FIRESTORE_TRANSACTION";
       const outcome = await db.runTransaction(async transaction => {
         const current = await transaction.get(documentRef);
         const existingVersion = await transaction.get(versionRef);
@@ -492,6 +517,7 @@ publishRouter.post(
         return "PUBLISHED";
       });
 
+      console.info("publish_complete", { requestId, pdfSizeBytes, durationMs: Date.now() - startedAt });
       res.status(200).json({
         docId,
         versionId: input.versionId,
@@ -499,18 +525,19 @@ publishRouter.post(
         alreadyPublished: outcome === "ALREADY_PUBLISHED"
       });
     } catch (error) {
-      if (error instanceof PublishConflict) {
-        sendApiError(res, 409, error.code, error.message);
-        return;
-      }
-
-      console.error("Publish failed", error);
-
+      const status = error instanceof PublishConflict ? 409 : 503;
+      const code = error instanceof PublishConflict ? error.code : "SERVICE_UNAVAILABLE";
+      const storageCode = (error as { code?: unknown } | null)?.code;
+      console.warn("publish_failed", {
+        requestId, stage, status, code, pdfSizeBytes, durationMs: Date.now() - startedAt,
+        exception: error instanceof Error ? error.name : "Unknown",
+        storageCode: typeof storageCode === "number" ? storageCode : undefined,
+        reason: error instanceof PublishConflict ? error.message : undefined
+      });
       sendApiError(
-        res,
-        503,
-        "SERVICE_UNAVAILABLE",
-        "Unable to publish document"
+        res, status, code,
+        error instanceof PublishConflict ? error.message : "Unable to publish document",
+        requestId
       );
     }
   }
