@@ -215,9 +215,10 @@ test("A08 idempotency and quota settlement", async (t) => {
         cross, afterMidnight, db
       );
       assert.equal(retry.kind, "COMPLETED");
+      assert.equal(retry.dayUtc, "2026-11-27");
 
       const cached = await getCachedAiAnswer(
-        cross, "2026-11-27", db
+        cross, retry.dayUtc!, db
       );
       assert.equal(cached?.answer, "Cross-day cached answer");
 
@@ -230,6 +231,61 @@ test("A08 idempotency and quota settlement", async (t) => {
       const originalDay = await dayRef.get();
       assert.equal(originalDay.get("requests"), 4);
     });
+    await t.test("cross-day NOT_SENT retry uses next-day quota", async () => {
+      const beforeMidnight = new Date(
+        "2026-11-27T23:59:00.000Z"
+      );
+      const afterMidnight = new Date(
+        "2026-11-28T00:01:00.000Z"
+      );
+
+      const cross = input("msg_cross_day_retry");
+      const nextDayRef = db.collection("aiUsage")
+        .doc(uid).collection("days").doc("2026-11-28");
+
+      assert.equal(
+        (await beginAiRequest(cross, beforeMidnight, db)).kind,
+        "STARTED"
+      );
+
+      assert.equal(
+        (await finishAiRequest(
+          cross, "2026-11-27", "NOT_SENT", 0, db
+        )).kind,
+        "FINALIZED"
+      );
+
+      assert.equal(
+        (await beginAiRequest(cross, afterMidnight, db)).kind,
+        "STARTED"
+      );
+
+      // Only one new reservation on the next UTC day.
+      assert.equal(
+        (await beginAiRequest(cross, afterMidnight, db)).kind,
+        "IN_PROGRESS"
+      );
+
+      const nextDayUsage = await nextDayRef.get();
+
+      assert.equal(nextDayUsage.get("requests"), 1);
+      assert.equal(nextDayUsage.get("reservedTokens"), 8192);
+
+      const originalDay = await dayRef.get();
+      assert.equal(originalDay.get("requests"), 4);
+
+      assert.equal(
+        (await finishAiRequest(
+          cross, "2026-11-28", "NOT_SENT", 0, db
+        )).kind,
+        "FINALIZED"
+      );
+
+      const refunded = await nextDayRef.get();
+
+      assert.equal(refunded.get("requests"), 0);
+      assert.equal(refunded.get("reservedTokens"), 0);
+    });
   } finally {
     const requests = await db.collection("aiUsage")
       .doc(uid).collection("requests").get();
@@ -237,6 +293,10 @@ test("A08 idempotency and quota settlement", async (t) => {
 
     requests.docs.forEach((doc) => batch.delete(doc.ref));
     batch.delete(dayRef);
+    batch.delete(
+      db.collection("aiUsage")
+        .doc(uid).collection("days").doc("2026-11-28")
+    );
 
     await batch.commit();
   }

@@ -28,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -109,6 +110,7 @@ fun ProfileScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showSellerTermsDialog by remember { mutableStateOf(false) }
 
     val canCancelEdit = uiState.isEditingProfile &&
         uiState.displayName.isNotBlank() &&
@@ -124,6 +126,39 @@ fun ProfileScreen(
     }
 
     UniShareTheme(mode = uiState.currentMode) {
+        if (showSellerTermsDialog) {
+            AlertDialog(
+                onDismissRequest = { showSellerTermsDialog = false },
+                title = { Text("Đăng ký Người bán") },
+                text = {
+                    Text(
+                        "Bạn xác nhận muốn đăng bán tài liệu do mình " +
+                        "có quyền chia sẻ và tuân thủ quy định UniShare. " +
+                        "Việc đăng ký không tự kích hoạt nhận thanh toán."
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showSellerTermsDialog = false
+                            viewModel.requestSellerEnrollment(
+                                confirmTerms = true
+                            )
+                        }
+                    ) {
+                        Text("Tôi đồng ý")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showSellerTermsDialog = false }
+                    ) {
+                        Text("Hủy")
+                    }
+                }
+            )
+        }
+
         ProfileScreenContent(
             uiState = uiState,
             onLoginClick = onLoginClick,
@@ -138,7 +173,7 @@ fun ProfileScreen(
             },
             onSaveProfile = viewModel::saveProfile,
             onSwitchMode = viewModel::switchMode,
-            onRequestSellerEnrollment = { viewModel.requestSellerEnrollment(confirmTerms = true) },
+            onRequestSellerEnrollment = { showSellerTermsDialog = true },
             onDismissEnrollmentNotice = viewModel::dismissEnrollmentNotice,
             onOpenPurchasedLibrary = onOpenPurchasedLibrary,
             onOpenTransactionHistory = onOpenTransactionHistory,
@@ -1291,6 +1326,22 @@ private fun SellerModeDashboardBody(
                     fontSize = 11.5.sp
                 )
             }
+        }
+
+        // Real Seller statistics are not connected yet.
+        Surface(
+            color = Color(0xFFFFF7ED),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "Thống kê Người bán chưa được kết nối. " +
+                    "Các chỉ số bên dưới chỉ là giá trị khởi tạo, " +
+                    "không phải doanh thu hoặc đơn hàng thực tế.",
+                color = Color(0xFF9A3412),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(12.dp)
+            )
         }
 
         // 3 thẻ chỉ số tổng quan
