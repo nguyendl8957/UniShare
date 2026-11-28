@@ -72,6 +72,9 @@ import vn.unishare.data.repository.DocumentUploadRepositoryImpl
 import vn.unishare.feature.seller.ui.A04SellerRepositoryAdapter
 import vn.unishare.feature.seller.ui.UploadWizardScreen
 import vn.unishare.feature.seller.ui.SellerDocumentsScreen
+import vn.unishare.feature.revenue.ui.SellerRevenueScreen
+import vn.unishare.feature.revenue.ui.SellerRevenueViewModel
+import vn.unishare.feature.revenue.ui.HttpSellerRevenueRepository
 import vn.unishare.feature.seller.ui.UploadWizardUiState
 import vn.unishare.feature.seller.ui.UploadWizardViewModel
 
@@ -268,6 +271,9 @@ fun AppNavHost(container: AppContainer) {
                 onOpenPurchasedLibrary = {
                     navigateMainTab("purchased")
                 },
+                onOpenTransactionHistory = {
+                    navController.navigate("buyer/transactions")
+                },
                 onOpenSellerManagement = {
                     navController.navigate("seller-documents")
                 },
@@ -321,14 +327,36 @@ fun AppNavHost(container: AppContainer) {
                         navController.navigate("document/$docId")
                     },
                     onRevenueTabClick = {
-                        Toast.makeText(
-                            context,
-                            "Thống kê doanh thu chưa được kết nối.",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        navController.navigate("seller/revenue")
                     }
                 )
             }
+        }
+        composable("seller/revenue") { entry ->
+            val revenueViewModel: SellerRevenueViewModel = viewModel(
+                viewModelStoreOwner = entry,
+                factory = viewModelFactory {
+                    initializer {
+                        SellerRevenueViewModel(
+                            authRepository = container.authRepository,
+                            revenueRepository = HttpSellerRevenueRepository(
+                                auth = firebaseAuth,
+                                apiBaseUrl = c06ApiUrl
+                            )
+                        )
+                    }
+                }
+            )
+
+            SellerRevenueScreen(
+                viewModel = revenueViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onLoginClick = {
+                    navController.navigate("auth")
+                }
+            )
         }
         composable("seller-upload") { entry ->
             val sellerUid = firebaseAuth.currentUser?.uid
@@ -405,15 +433,6 @@ fun AppNavHost(container: AppContainer) {
                     }
                 }
 
-                if (isDebugBuild) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Button(onClick = {
-                        navController.navigate("buyer/transactions")
-                    }) {
-                        Text("Lịch sử mua (B05 Demo)")
-                    }
-                }
             }
         }
         composable("home") {
@@ -648,7 +667,9 @@ fun AppNavHost(container: AppContainer) {
                     initializer {
                         BuyerTransactionsViewModel(
                             authRepository = container.authRepository,
-                            transactionsRepository = container.createBuyerTransactionsRepository(),
+                            transactionsRepository = container.createBuyerTransactionsRepository(
+                                apiBaseUrl = c06ApiUrl
+                            ),
                             savedStateHandle = createSavedStateHandle()
                         )
                     }
@@ -687,7 +708,9 @@ fun AppNavHost(container: AppContainer) {
                     initializer {
                         BuyerTransactionsViewModel(
                             authRepository = container.authRepository,
-                            transactionsRepository = container.createBuyerTransactionsRepository(),
+                            transactionsRepository = container.createBuyerTransactionsRepository(
+                                apiBaseUrl = c06ApiUrl
+                            ),
                             savedStateHandle = createSavedStateHandle()
                         )
                     }
