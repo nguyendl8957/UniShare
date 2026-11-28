@@ -128,7 +128,7 @@ fun AppNavHost(container: AppContainer) {
         Build.MODEL.contains("sdk_gphone", ignoreCase = true)
 
     val allowEmulatorCheckout = isDebugBuild && isEmulator
-    val allowCheckout = isDebugBuild
+    val allowCheckout = true
     val firebaseAuth = remember { FirebaseAuth.getInstance() }
     val c06ApiUrl = "https://asia-southeast1-unishare-db44a.cloudfunctions.net/api"
     val enableCloudLibrary = true
