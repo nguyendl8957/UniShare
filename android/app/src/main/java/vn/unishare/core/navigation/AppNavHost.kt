@@ -58,6 +58,7 @@ import vn.unishare.feature.explore.ui.DocumentDetailScreen
 import vn.unishare.feature.profile.ui.ProfileScreen
 import vn.unishare.feature.profile.ui.SellerPublicProfileScreen
 import vn.unishare.feature.profile.ui.ProfileViewModel
+import vn.unishare.feature.profile.ui.HttpSellerDashboardRepository
 import vn.unishare.feature.profile.ui.BuyerProfileRoleContract
 import androidx.compose.material3.Scaffold
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -257,7 +258,15 @@ fun AppNavHost(container: AppContainer) {
                         ProfileViewModel(
                             authRepository = container.authRepository,
                             profileRepository = container.profileRepository,
-                            sellerRoleContract = BuyerProfileRoleContract(apiBaseUrl = c06ApiUrl)
+                            sellerRoleContract = BuyerProfileRoleContract(apiBaseUrl = c06ApiUrl),
+                            sellerDashboardRepository = HttpSellerDashboardRepository(
+                                auth = firebaseAuth,
+                                apiBaseUrl = c06ApiUrl,
+                                revenue = HttpSellerRevenueRepository(
+                                    auth = firebaseAuth,
+                                    apiBaseUrl = c06ApiUrl
+                                )
+                            )
                         )
                     }
                 }
