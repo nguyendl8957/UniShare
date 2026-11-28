@@ -166,12 +166,14 @@ fun AppNavHost(container: AppContainer) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                if (isDebugBuild) {
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                Button(onClick = {
-                    navController.navigate("buyer/transactions")
-                }) {
-                    Text("Lịch sử mua (B05)")
+                    Button(onClick = {
+                        navController.navigate("buyer/transactions")
+                    }) {
+                        Text("Lịch sử mua (B05 Demo)")
+                    }
                 }
             }
         }
