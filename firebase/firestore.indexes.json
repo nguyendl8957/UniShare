@@ -104,7 +104,18 @@
         {"fieldPath": "status", "order": "ASCENDING"},
         {"fieldPath": "paidAt", "order": "ASCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "sellerId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "paidAt", "order": "ASCENDING"},
+        {"fieldPath": "amountVnd", "order": "ASCENDING"}
+      ]
     }
   ],
+
   "fieldOverrides": []
 }
