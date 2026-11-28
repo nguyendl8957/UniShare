@@ -38,6 +38,7 @@ class ProfileViewModel(
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
 
     private var activeProfileJob: Job? = null
+    private var activeProfileSaveJob: Job? = null
     private var activeSellerDashboardJob: Job? = null
     private var activePublicProfileJob: Job? = null
     private var profileLoadSequence: Long = 0L
@@ -82,6 +83,7 @@ class ProfileViewModel(
     ) {
         activeProfileJob?.cancel()
         activeSellerDashboardJob?.cancel()
+        activeProfileSaveJob?.cancel()
         profileLoadSequence++
         val preservedPublicId = _uiState.value.selectedPublicSellerId
         val preservedPublicState = _uiState.value.publicSellerState
@@ -187,6 +189,7 @@ class ProfileViewModel(
 
     fun cancelEditingProfile() {
         val current = _uiState.value
+        if (current.saveStatus is ProfileSaveStatus.Saving) return
         val hasSavedProfile = current.displayName.isNotBlank() &&
             current.school.isNotBlank() &&
             current.faculty.isNotBlank()
@@ -236,6 +239,7 @@ class ProfileViewModel(
     }
 
     fun onEditAvatarChange(avatarUri: String) {
+        if (!_uiState.value.isEditingProfile || _uiState.value.activeUid == null) return
         _uiState.update {
             it.copy(
                 editAvatarPath = avatarUri,
@@ -291,22 +295,27 @@ class ProfileViewModel(
             )
         }
 
-        viewModelScope.launch(mainDispatcher) {
-            val result = profileRepository.updateMyProfile(
-                displayName = trimmedName,
-                school = trimmedSchool,
-                faculty = trimmedFaculty
-            )
+        activeProfileSaveJob = viewModelScope.launch(mainDispatcher) {
+            val selectedImage = current.editAvatarPath?.takeIf { it.startsWith("content://") }
+            val result: Result<String?> = if (selectedImage != null) {
+                profileRepository.updateMyProfileWithAvatar(
+                    trimmedName, trimmedSchool, trimmedFaculty, selectedImage, current.avatarPath
+                )
+            } else {
+                profileRepository.updateMyProfile(trimmedName, trimmedSchool, trimmedFaculty)
+                    .map { current.avatarPath }
+            }
             if (_uiState.value.activeUid != targetUid) return@launch
 
             result.fold(
-                onSuccess = {
+                onSuccess = { avatar ->
                     _uiState.update {
                         it.copy(
                             displayName = trimmedName,
                             school = trimmedSchool,
                             faculty = trimmedFaculty,
-                            avatarPath = it.editAvatarPath,
+                            avatarPath = avatar,
+                            editAvatarPath = avatar,
                             isEditingProfile = false,
                             saveStatus = ProfileSaveStatus.Saved()
                         )
@@ -450,12 +459,11 @@ class ProfileViewModel(
             current.currentMode != UniAppMode.SELLER
         ) return
 
-        activeSellerDashboardJob?.cancel()
+        if (activeSellerDashboardJob?.isActive == true) return
 
         _uiState.update {
             it.copy(
                 sellerDashboardLoading = true,
-                sellerDashboardLoaded = false,
                 sellerDashboardError = null
             )
         }
@@ -494,8 +502,6 @@ class ProfileViewModel(
         }
     }
     fun signOut() {
-        // Xóa ngay state hồ sơ trước khi gọi signOut để không nháy dữ liệu cũ
-        clearPrivateProfileState(isRestoring = false, isGuest = true)
         viewModelScope.launch(mainDispatcher) {
             authRepository.signOut()
         }

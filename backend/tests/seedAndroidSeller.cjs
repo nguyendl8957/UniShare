@@ -41,6 +41,22 @@ async function main() {
     sellerEnabled: true
   });
 
+  const db = getFirestore();
+  const batch = db.batch();
+  const otherSellerId = "c04_legacy_seller";
+  batch.set(db.collection("users").doc(otherSellerId), {
+    sellerEnabled: true, displayName: "Lê Bảo Ngọc", school: "", faculty: ""
+  });
+  for (const [docId, owner] of [
+    ["c04_legacy_first", user.uid],
+    ["c04_legacy_second", user.uid],
+    ["c04_legacy_other", otherSellerId]
+  ]) {
+    batch.set(db.collection("catalog").doc(docId), {
+      title: `C04 Legacy ${docId}`, priceVnd: 10_000, sellerId: owner
+    });
+  }
+  await batch.commit();
   console.log("A04 emulator Seller fixture ready");
   console.log("Project: demo-unishare");
   console.log("UID:", user.uid);

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import vn.unishare.saveRegressionScreenshot
 import vn.unishare.domain.repository.AuthSession
 import vn.unishare.feature.ai.ui.AiChatScreen
 import vn.unishare.feature.ai.ui.AiChatViewModel
@@ -60,6 +61,7 @@ class AiChatScreenTest {
         composeRule.onNodeWithText("Trang 1").assertIsDisplayed()
         composeRule.onNodeWithText("Trang 2").assertIsDisplayed()
 
+        saveRegressionScreenshot("ai-answer")
         composeRule.onNodeWithText("Trang 1").performClick()
         assertEquals(FakeDocumentAiRepository.DOC_DSA_BINARY_SEARCH, citedDocId)
         assertEquals(1, citedPage)
@@ -152,6 +154,7 @@ class AiChatScreenTest {
 
         composeRule.onNodeWithTag("chip_suggest_explain").performClick()
         composeRule.onNodeWithTag("ai_retry_banner").assertIsDisplayed()
+        saveRegressionScreenshot("ai-retry")
 
         composeRule.runOnIdle {
             fakeAiRepo.simulateOffline = false

@@ -1,5 +1,15 @@
 package vn.unishare.feature.auth.ui
 
+import android.annotation.SuppressLint
+import androidx.activity.compose.BackHandler
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -33,12 +43,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.collectLatest
 import vn.unishare.R
-import vn.unishare.core.ui.components.UniBottomBar
 import vn.unishare.core.ui.components.UniButton
 import vn.unishare.core.ui.components.UniTextField
 import vn.unishare.core.ui.feedback.UiFeedback
 import vn.unishare.core.ui.feedback.UiFeedbackState
-import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import vn.unishare.domain.repository.AuthSession
 
@@ -48,10 +56,13 @@ fun AuthScreen(
     onNavigateToTarget: (String?) -> Unit,
     onAuthCanceled: () -> Unit,
     onShowSnackbar: (String) -> Unit = {},
-    onGoogleSignInClick: () -> Unit = { viewModel.onGoogleSignInResult(null) }
+    onGoogleSignInClick: (() -> Unit)? = null
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val authSession by viewModel.authSession.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val authSession by viewModel.authSession.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val resources = LocalResources.current
+    BackHandler { viewModel.cancelAuth() }
 
     // Lắng nghe sự kiện điều hướng / thông báo dùng một lần (One-shot events)
     LaunchedEffect(viewModel) {
@@ -71,7 +82,18 @@ fun AuthScreen(
             viewModel.submit(email, password, confirmPassword)
         },
         onSwitchMode = viewModel::switchFormMode,
-        onGoogleSignInClick = onGoogleSignInClick,
+        onGoogleSignInClick = onGoogleSignInClick ?: {
+            viewModel.signInWithGoogle {
+                @SuppressLint("DiscouragedApi")
+                val clientId = resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                check(clientId != 0) { "UniShare chưa được cấu hình đăng nhập Google. Vui lòng dùng email." }
+                val option = GetSignInWithGoogleOption.Builder(resources.getString(clientId)).build()
+                val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
+                val credential = CredentialManager.create(context).getCredential(context, request).credential
+                check(credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL)
+                GoogleIdTokenCredential.createFrom(credential.data).idToken
+            }
+        },
         onCancelClick = viewModel::cancelAuth
     )
 }
@@ -109,25 +131,15 @@ fun AuthScreenContent(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        containerColor = Color.White,
-        bottomBar = {
-            // Thanh điều hướng dưới theo đúng Figma node 82:145 (tab "Cá nhân" đang chọn)
-            UniBottomBar(
-                selectedRoute = "profile",
-                onItemSelected = { route ->
-                    if (route != "profile") {
-                        onCancelClick()
-                    }
-                },
-                mode = UniAppMode.BUYER
-            )
-        }
+        containerColor = Color.White
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.White)
                 .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .imePadding()
         ) {
             // 1. Header Thương hiệu + Chuông + Menu theo Figma node 82:89 (cao 64dp, padding ngang 24dp)
             Row(
@@ -146,25 +158,8 @@ fun AuthScreenContent(
                         .height(48.55.dp)
                 )
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_bell),
-                        contentDescription = "Thông báo",
-                        tint = Color.Unspecified,
-                        modifier = Modifier.size(21.dp)
-                    )
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_menu),
-                        contentDescription = "Danh mục",
-                        tint = Color.Unspecified,
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clickable { onCancelClick() }
-                            .testTag("btn_cancel_auth")
-                    )
+                IconButton(onClick = onCancelClick, modifier = Modifier.testTag("btn_cancel_auth")) {
+                    Icon(painterResource(R.drawable.ic_close), contentDescription = "Đóng đăng nhập")
                 }
             }
 

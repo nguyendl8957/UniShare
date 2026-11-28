@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import vn.unishare.domain.repository.AuthRepository
 import vn.unishare.domain.repository.AuthSession
 import java.io.IOException
+import java.net.SocketTimeoutException
+import vn.unishare.data.repository.PurchasedLibraryApiException
 
 enum class EntitlementStatus {
     ACTIVE,
@@ -735,6 +737,12 @@ class PurchasedLibraryViewModel(
     private fun mapErrorMessage(error: Throwable): String {
         val raw = error.message.orEmpty()
         return when {
+            error is PurchasedLibraryApiException -> when (error.httpStatus) {
+                401 -> "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
+                403 -> "Bạn chưa có quyền truy cập thư viện."
+                else -> "Chưa tải được thư viện. Vui lòng thử lại."
+            }
+            error is SocketTimeoutException -> "Máy chủ phản hồi chậm. Vui lòng thử lại."
             error is IOException ||
                 raw.contains("network", ignoreCase = true) ||
                 raw.contains("mạng", ignoreCase = true) ->

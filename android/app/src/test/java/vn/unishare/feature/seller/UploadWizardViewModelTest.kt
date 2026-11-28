@@ -9,6 +9,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import vn.unishare.data.repository.DocumentUploadApiException
 import vn.unishare.feature.seller.ui.ALLOWED_PDF_MIME
 import vn.unishare.feature.seller.ui.DocumentUploadRepository
 import vn.unishare.feature.seller.ui.DraftSession
@@ -33,6 +34,7 @@ private class ControllableUploadRepository(
 
     var uploadGate: CompletableDeferred<Unit>? = null
     var publishGate: CompletableDeferred<Unit>? = null
+    var publishError: Exception? = null
 
     override suspend fun createOrReuseDraft(idempotencyKey: String): Result<DraftSession> {
         return delegate.createOrReuseDraft(idempotencyKey)
@@ -51,6 +53,7 @@ private class ControllableUploadRepository(
 
     override suspend fun publishDocument(request: PublishDocumentRequest): Result<SellerDocumentItem> {
         publishGate?.await()
+        publishError?.let { return Result.failure(it) }
         return delegate.publishDocument(request)
     }
 
@@ -230,6 +233,37 @@ class UploadWizardViewModelTest {
         assertEquals(savedDraftId, publishedState.draftId)
         assertEquals(1, fakeRepo.uploadCallCount)
         assertEquals(2, fakeRepo.publishCallCount)
+    }
+
+    @Test
+    fun replacingPdfAfterFailedPublishCreatesNewDraftAndPreservesMetadata() = runBlocking {
+        val repository = ControllableUploadRepository().apply {
+            publishError = DocumentUploadApiException(httpStatus = 409, invalidPdf = true)
+        }
+        val viewModel = UploadWizardViewModel(
+            repository = repository,
+            mainDispatcher = Dispatchers.Unconfined,
+            autoLoadDocuments = false
+        )
+        fillValidWizard(viewModel)
+        viewModel.submitPublish()
+        val failed = viewModel.wizardState.value
+        val failure = failed.uploadPublishState as UploadPublishState.Failed
+        assertEquals("Tệp PDF không hợp lệ. Vui lòng chọn lại tài liệu.", failure.message)
+        assertFalse(failure.canRetry)
+        assertNotNull(failed.draftId)
+
+        viewModel.selectPdfFile(
+            SelectedPdfFile("content://docs/replacement.pdf", "replacement.pdf", ALLOWED_PDF_MIME, 10_000L)
+        )
+        repository.publishError = null
+        viewModel.submitPublish()
+
+        val published = viewModel.wizardState.value
+        assertTrue(published.uploadPublishState is UploadPublishState.Published)
+        assertTrue(published.draftId != failed.draftId)
+        assertEquals(failed.title, published.title)
+        assertEquals(2, repository.delegate.uploadCallCount)
     }
 
     @Test

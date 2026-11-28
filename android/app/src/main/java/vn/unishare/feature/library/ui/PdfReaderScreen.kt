@@ -184,8 +184,7 @@ fun PdfReaderContent(
             UniBottomBar(
                 selectedRoute = "purchased",
                 onItemSelected = onBottomNavSelected,
-                mode = UniAppMode.BUYER,
-                modifier = Modifier.navigationBarsPadding()
+                mode = UniAppMode.BUYER
             )
         }
     ) { innerPadding ->

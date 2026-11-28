@@ -22,6 +22,8 @@ import {
 } from "node:crypto";
 import request from "supertest";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
+import { PDFDocument } from "pdf-lib";
 
 import { app } from "../src/app";
 import { initializeFirebaseAdmin } from "../src/shared/firebaseAuth";
@@ -50,6 +52,19 @@ function bankTime(): string {
     .replace("T", " ");
 }
 
+async function createEmulatorBuyer() {
+  const response = await fetch(
+    "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-key",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ returnSecureToken: true })
+    }
+  );
+  assert.equal(response.status, 200);
+  return await response.json() as { localId: string; idToken: string };
+}
+
 function computePairKey(buyerId: string, docId: string): string {
   return createHash("sha256")
     .update(JSON.stringify([buyerId, docId]))
@@ -62,13 +77,15 @@ function computePairKey(buyerId: string, docId: string): string {
 async function seedE2EOrderAndDocument(options?: {
   amountVnd?: number;
   expired?: boolean;
+  buyerId?: string;
+  sellerId?: string;
 }) {
   const db = getFirestore();
   const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
   const orderId = `ord_${randomBytes(8).toString("hex")}`;
   const docId = `doc_e2e_${suffix}`;
-  const buyerId = `buyer1_e2e_${suffix}`;
-  const sellerId = `seller_e2e_${suffix}`;
+  const buyerId = options?.buyerId ?? `buyer1_e2e_${suffix}`;
+  const sellerId = options?.sellerId ?? `seller_e2e_${suffix}`;
   const versionId = "v1";
   const amountVnd = options?.amountVnd ?? 12000;
   const paymentCode = OrderPolicy.generatePaymentCode();
@@ -198,6 +215,84 @@ async function assertNoEntitlement(db: Firestore, buyerId: string, docId: string
 // ============================================================================
 // BỘ KIỂM THỬ TOÀN DIỆN E2E (P01 - P06)
 // ============================================================================
+
+test("Paid purchase appears in library and serves the same version after listing changes", async () => {
+  ensureTestEnvironment();
+  assert.equal(process.env.FIREBASE_AUTH_EMULATOR_HOST, "127.0.0.1:9099");
+  assert.equal(process.env.FIREBASE_STORAGE_EMULATOR_HOST, "127.0.0.1:9199");
+  const bucketName = "demo-unishare.firebasestorage.app";
+  assert.equal(process.env.UNISHARE_STORAGE_BUCKET, bucketName);
+  initializeFirebaseAdmin();
+
+  const buyer = await createEmulatorBuyer();
+  const other = await createEmulatorBuyer();
+  const seller = await createEmulatorBuyer();
+  const fixture = await seedE2EOrderAndDocument({ buyerId: buyer.localId, sellerId: seller.localId });
+  const db = getFirestore();
+  const document = db.collection("documents").doc(fixture.docId);
+  const file = getStorage().bucket(bucketName)
+    .file(`private/${fixture.docId}/${fixture.versionId}/source.pdf`);
+  const pdf = await PDFDocument.create();
+  pdf.addPage();
+  const bytes = Buffer.from(await pdf.save());
+  await file.save(bytes, { resumable: false, metadata: { contentType: "application/pdf" } });
+  const [metadata] = await file.getMetadata();
+  await document.collection("versions").doc(fixture.versionId).update({
+    pdfGeneration: String(metadata.generation),
+    sizeBytes: bytes.length
+  });
+
+  await db.collection("users").doc(seller.localId).set({ sellerEnabled: true });
+  await seedE2EOrderAndDocument({ sellerId: seller.localId });
+  const txn = {
+    txnId: `txn_library_${randomUUID()}`,
+    content: `SEVQR ${fixture.paymentCode}`
+  };
+  const webhook = await sendSignedSepayWebhook(txn);
+  assert.equal(webhook.body.status, "MATCHED");
+  assert.equal((await sendSignedSepayWebhook(txn)).status, 200);
+
+  const revenue = await request(app).get("/v1/me/revenue")
+    .set("Authorization", `Bearer ${seller.idToken}`);
+  assert.equal(revenue.status, 200);
+  assert.deepEqual(revenue.body, {
+    totalRevenueVnd: fixture.order.amountVnd,
+    paidOrderCount: 1,
+    totalDocumentsSold: 1
+  });
+  const sales = await request(app).get("/v1/me/sales")
+    .set("Authorization", `Bearer ${seller.idToken}`);
+  assert.equal(sales.status, 200);
+  assert.deepEqual(sales.body.items.map((item: { orderId: string }) => item.orderId), [fixture.order.orderId]);
+
+  const library = (token: string) => request(app).get("/v1/me/library")
+    .set("Authorization", `Bearer ${token}`);
+  const content = (token: string) => request(app).get(`/v1/documents/${fixture.docId}/content`)
+    .set("Authorization", `Bearer ${token}`);
+
+  assert.equal((await library(buyer.idToken)).body.items[0].versionId, fixture.versionId);
+  await document.update({ status: "ARCHIVED", activeVersionId: "v2" });
+  const archived = await library(buyer.idToken);
+  assert.equal(archived.status, 200);
+  assert.equal(archived.body.items[0].isSellerArchived, true);
+  assert.equal(archived.body.items[0].versionId, fixture.versionId);
+
+  await document.delete();
+  const withoutMetadata = await library(buyer.idToken);
+  assert.equal(withoutMetadata.status, 200);
+  assert.equal(withoutMetadata.body.items[0].docId, fixture.docId);
+  assert.equal(withoutMetadata.body.items[0].versionId, fixture.versionId);
+  const readable = await content(buyer.idToken);
+  assert.equal(readable.status, 200);
+  assert.match(readable.headers["content-type"], /application\/pdf/);
+  assert.deepEqual((await library(other.idToken)).body.items, []);
+  assert.equal((await content(other.idToken)).status, 403);
+
+  await db.collection("entitlements").doc(buyer.localId).collection("items").doc(fixture.docId)
+    .update({ revokedAt: new Date() });
+  assert.deepEqual((await library(buyer.idToken)).body.items, []);
+  assert.equal((await content(buyer.idToken)).status, 403);
+});
 
 test("B07 E2E Suite: Kiểm thử tích hợp toàn diện thanh toán và mở PDF", async () => {
   ensureTestEnvironment();

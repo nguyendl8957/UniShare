@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 export type ApiErrorCode =
   | "INVALID_REQUEST"
+  | "INVALID_PDF"
   | "UNAUTHENTICATED"
   | "FORBIDDEN"
   | "NOT_FOUND"
@@ -12,13 +13,14 @@ export function sendApiError(
   res: Response,
   status: number,
   code: ApiErrorCode,
-  message: string
+  message: string,
+  requestId = randomUUID()
 ): void {
   res.status(status).json({
     error: {
       code,
       message,
-      requestId: randomUUID()
+      requestId
     }
   });
 }

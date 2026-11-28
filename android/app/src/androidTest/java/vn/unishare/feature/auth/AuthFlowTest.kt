@@ -61,10 +61,11 @@ class AuthFlowTest {
         val fakeRepo = FakeFlowAuthRepository()
         var currentRoute by mutableStateOf("detail:doc_CTDL_01")
         var returnedTarget: String? = null
+        var signedIn by mutableStateOf(false)
 
         val viewModel = AuthViewModel(
             authRepository = fakeRepo,
-            savedStateHandle = SavedStateHandle(mapOf(RETURN_TARGET_KEY to "checkout:doc_CTDL_01")),
+            savedStateHandle = SavedStateHandle(mapOf(RETURN_TARGET_KEY to "document/doc_CTDL_01")),
             mainDispatcher = Dispatchers.Main.immediate
         )
 
@@ -75,7 +76,7 @@ class AuthFlowTest {
                         Column {
                             Text("Chi tiết tài liệu: Cấu trúc dữ liệu & Giải thuật")
                             Button(
-                                onClick = { currentRoute = "auth" },
+                                onClick = { currentRoute = if (signedIn) "checkout:doc_CTDL_01" else "auth" },
                                 modifier = Modifier.testTag("btn_buy_now")
                             ) {
                                 Text("Mua ngay")
@@ -87,7 +88,8 @@ class AuthFlowTest {
                             viewModel = viewModel,
                             onNavigateToTarget = { target ->
                                 returnedTarget = target
-                                currentRoute = target ?: "detail:doc_CTDL_01"
+                                signedIn = true
+                                currentRoute = "detail:doc_CTDL_01"
                             },
                             onAuthCanceled = {
                                 currentRoute = "detail:doc_CTDL_01"
@@ -118,8 +120,10 @@ class AuthFlowTest {
         composeTestRule.onNodeWithTag("btn_submit_auth").performClick()
         composeTestRule.waitForIdle()
 
-        // 4. Xác minh tự động quay lại đúng docId / checkout một lần duy nhất
-        assertEquals("checkout:doc_CTDL_01", returnedTarget)
+        assertEquals("document/doc_CTDL_01", returnedTarget)
+        composeTestRule.onNodeWithText("Chi tiết tài liệu: Cấu trúc dữ liệu & Giải thuật").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Màn hình thanh toán cho doc_CTDL_01").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("btn_buy_now").performClick()
         composeTestRule.onNodeWithText("Màn hình thanh toán cho doc_CTDL_01").assertIsDisplayed()
     }
 
@@ -131,7 +135,7 @@ class AuthFlowTest {
 
         val viewModel = AuthViewModel(
             authRepository = fakeRepo,
-            savedStateHandle = SavedStateHandle(mapOf(RETURN_TARGET_KEY to "checkout:doc_CTDL_01")),
+            savedStateHandle = SavedStateHandle(mapOf(RETURN_TARGET_KEY to "document/doc_CTDL_01")),
             mainDispatcher = Dispatchers.Main.immediate
         )
 

@@ -1,4 +1,4 @@
-﻿import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { getFirestore, type DocumentData, type Firestore } from "firebase-admin/firestore";
 
 export type AuthorizedPdf = {
   uid: string;
@@ -22,6 +22,7 @@ export class DocumentAccessError extends Error {
 
 const VALID_ID = /^[a-zA-Z0-9_-]{1,150}$/;
 const VALID_GENERATION = /^[1-9][0-9]*$/;
+const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 export async function authorizePdfRead(
   uid: string,
@@ -40,11 +41,22 @@ export async function authorizePdfRead(
 
   const entitlementSnapshot = await entitlementRef.get();
 
-  if (!entitlementSnapshot.exists) {
-    throw new DocumentAccessError(403, "ENTITLEMENT_REQUIRED");
+  return resolveEntitledPdf(uid, docId, entitlementSnapshot.data(), db);
+}
+
+export async function resolveEntitledPdf(
+  uid: string,
+  docId: string,
+  entitlement: DocumentData | undefined,
+  db: Firestore
+): Promise<AuthorizedPdf> {
+  if (!VALID_ID.test(docId)) {
+    throw new DocumentAccessError(400, "INVALID_REQUEST");
   }
 
-  const entitlement = entitlementSnapshot.data()!;
+  if (!entitlement) {
+    throw new DocumentAccessError(403, "ENTITLEMENT_REQUIRED");
+  }
 
   if (entitlement.revokedAt != null) {
     throw new DocumentAccessError(403, "ENTITLEMENT_REVOKED");
@@ -86,7 +98,8 @@ export async function authorizePdfRead(
     pdfPath !== expectedPath ||
     !VALID_GENERATION.test(pdfGeneration) ||
     !Number.isSafeInteger(sizeBytes) ||
-    sizeBytes <= 0
+    sizeBytes <= 0 ||
+    sizeBytes > MAX_PDF_BYTES
   ) {
     throw new DocumentAccessError(404, "PDF_NOT_AVAILABLE");
   }

@@ -1,3 +1,5 @@
+import { hasPdfHeader } from "../documents/pdfValidation";
+
 export type PdfTextPage = {
   page: number;
   text: string;
@@ -23,17 +25,9 @@ const MAX_TEXT_CHARS = 12000;
 export async function extractPdfPages(
   pdfBytes: Buffer
 ): Promise<PdfTextPage[]> {
-  if (
-    !Buffer.isBuffer(pdfBytes) ||
-    pdfBytes.length < 5 ||
-    pdfBytes.subarray(0, 5).toString("ascii") !== "%PDF-"
-  ) {
-    throw new PdfTextError("INVALID_PDF");
-  }
-
-  if (pdfBytes.length > MAX_PDF_BYTES) {
-    throw new PdfTextError("PDF_TOO_LARGE");
-  }
+  if (!Buffer.isBuffer(pdfBytes)) throw new PdfTextError("INVALID_PDF");
+  if (pdfBytes.length > MAX_PDF_BYTES) throw new PdfTextError("PDF_TOO_LARGE");
+  if (!hasPdfHeader(pdfBytes)) throw new PdfTextError("INVALID_PDF");
 
   const { getDocumentProxy, extractText } = await import("unpdf");
 

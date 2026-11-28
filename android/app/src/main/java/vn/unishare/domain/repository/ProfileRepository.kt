@@ -11,6 +11,14 @@ data class UserProfile(
 interface ProfileRepository {
     suspend fun getMyProfile(): Result<UserProfile?>
 
+    suspend fun updateMyProfileWithAvatar(
+        displayName: String,
+        school: String,
+        faculty: String,
+        imageUri: String,
+        previousPath: String?
+    ): Result<String> = Result.failure(UnsupportedOperationException("Chưa thể cập nhật ảnh đại diện."))
+
     suspend fun updateMyProfile(
         displayName: String,
         school: String,

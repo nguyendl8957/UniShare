@@ -100,6 +100,10 @@ class ProfileFlowTest {
             .performScrollTo()
             .performClick()
 
+        composeRule.onNodeWithText("Hủy").performClick()
+        composeRule.onNodeWithTag("profile_buyer_view").assertIsDisplayed()
+        composeRule.onNodeWithTag("btn_profile_logout").performClick()
+        composeRule.onNodeWithTag("btn_confirm_logout").performClick()
         composeRule.onNodeWithTag("profile_guest_view").assertIsDisplayed()
         composeRule.onNodeWithTag("btn_profile_guest_login").assertIsDisplayed()
     }
@@ -120,11 +124,13 @@ class ProfileFlowTest {
         composeRule.onNodeWithTag("btn_switch_to_seller").performClick()
         composeRule.onNodeWithTag("banner_seller_denied").assertIsDisplayed()
 
-        // Máy chủ cấp quyền khi bấm Đăng ký quyền Người bán
+        // Máy chủ chỉ cấp quyền khi đã xác nhận điều khoản.
         composeRule.runOnIdle {
             env.denySellerEnrollment = false
         }
         composeRule.onNodeWithTag("btn_enroll_seller").performClick()
+        composeRule.onNodeWithText("Đăng ký Người bán", substring = false).assertIsDisplayed()
+        composeRule.onNodeWithText("Tôi đồng ý").performClick()
         composeRule.onNodeWithTag("profile_seller_dashboard").assertIsDisplayed()
 
         // Quay lại Buyer để kiểm tra chỉnh sửa hồ sơ khi mất mạng
@@ -137,17 +143,18 @@ class ProfileFlowTest {
         }
         composeRule.onNodeWithTag("input_profile_name").performTextClearance()
         composeRule.onNodeWithTag("input_profile_name").performTextInput("Trần Minh Đức CNTT")
-        composeRule.onNodeWithTag("btn_profile_save").performClick()
+        composeRule.onNodeWithTag("btn_profile_save").performScrollTo().performClick()
 
         // Lỗi mất mạng vẫn giữ nguyên dữ liệu đã nhập và cho phép Thử lại
-        composeRule.onNodeWithTag("banner_profile_save_error").assertIsDisplayed()
+        composeRule.onNodeWithTag("banner_profile_save_error").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("input_profile_name")
+            .performScrollTo()
             .assertTextContains("Trần Minh Đức CNTT")
 
         composeRule.runOnIdle {
             env.simulateOffline = false
         }
-        composeRule.onNodeWithTag("btn_retry_save_profile").performClick()
+        composeRule.onNodeWithTag("btn_retry_save_profile").performScrollTo().performClick()
 
         composeRule.onNodeWithTag("profile_buyer_view").assertIsDisplayed()
         composeRule.onNodeWithTag("txt_profile_display_name")

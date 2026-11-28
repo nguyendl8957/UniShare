@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.google.firebase.storage.StorageException
+import vn.unishare.data.repository.DocumentUploadApiException
+import vn.unishare.data.repository.InvalidSelectedPdfException
 import java.io.IOException
 import java.util.UUID
 
@@ -114,8 +117,7 @@ class UploadWizardViewModel(
 
     fun selectPdfFile(pdf: SelectedPdfFile) {
         val normalizedMime = pdf.mimeType.trim().lowercase()
-        val hasPdfExtension = pdf.displayName.trim().lowercase().endsWith(".pdf")
-        if (normalizedMime != ALLOWED_PDF_MIME || !hasPdfExtension) {
+        if (normalizedMime != ALLOWED_PDF_MIME) {
             setPdfError("Tệp không hợp lệ. Vui lòng chọn đúng định dạng PDF (.pdf).")
             return
         }
@@ -135,6 +137,10 @@ class UploadWizardViewModel(
                 fieldErrors = it.fieldErrors.copy(pdfError = null)
             )
         }
+    }
+
+    fun rejectSelectedPdf(message: String) {
+        setPdfError(message)
     }
 
     fun clearPdfFile() {
@@ -268,7 +274,8 @@ class UploadWizardViewModel(
                         it.copy(
                             uploadPublishState = UploadPublishState.Failed(
                                 draftId = it.draftId,
-                                message = mapUploadError(error)
+                                message = mapUploadError(error),
+                                canRetry = !isInvalidPdf(error)
                             )
                         )
                     }
@@ -321,7 +328,8 @@ class UploadWizardViewModel(
                             it.copy(
                                 uploadPublishState = UploadPublishState.Failed(
                                     draftId = draft.draftId,
-                                    message = mapUploadError(error)
+                                    message = mapUploadError(error),
+                                    canRetry = !isInvalidPdf(error)
                                 )
                             )
                         }
@@ -364,7 +372,8 @@ class UploadWizardViewModel(
                             it.copy(
                                 uploadPublishState = UploadPublishState.Failed(
                                     draftId = draft.draftId,
-                                    message = mapUploadError(error)
+                                    message = mapUploadError(error),
+                                    canRetry = !isInvalidPdf(error)
                                 )
                             )
                         }
@@ -659,6 +668,12 @@ class UploadWizardViewModel(
     private fun invalidateUploadedArtifacts() {
         cachedPreviewArtifacts = null
         cachedPdfArtifact = null
+        if (cachedDraftSession != null || _wizardState.value.idempotencyKey != null) {
+            cachedDraftSession = null
+            _wizardState.update {
+                it.copy(draftId = null, draftVersionId = null, idempotencyKey = null, uploadPublishState = UploadPublishState.Idle)
+            }
+        }
     }
 
     private fun setPreviewError(message: String) {
@@ -744,15 +759,30 @@ class UploadWizardViewModel(
         _documentsState.update { it.copy(listState = nextListState) }
     }
 
+    private fun isInvalidPdf(error: Throwable): Boolean =
+        error is InvalidSelectedPdfException || error is DocumentUploadApiException && error.invalidPdf
+
     private fun mapUploadError(error: Throwable): String {
         val raw = error.message.orEmpty()
         return when {
+            error is InvalidSelectedPdfException -> error.message.orEmpty()
+            isInvalidPdf(error) ->
+                "Tệp PDF không hợp lệ. Vui lòng chọn lại tài liệu."
+            error is DocumentUploadApiException -> when (error.httpStatus) {
+                401 -> "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
+                403 -> "Bạn chưa có quyền thực hiện thao tác này."
+                else -> "Chưa thể đăng bán tài liệu. Vui lòng thử lại sau."
+            }
+            error is StorageException -> when (error.errorCode) {
+                StorageException.ERROR_NOT_AUTHENTICATED -> "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
+                StorageException.ERROR_NOT_AUTHORIZED -> "Bạn chưa có quyền thực hiện thao tác này."
+                else -> "Chưa tải được tài liệu. Vui lòng kiểm tra kết nối và thử lại."
+            }
             error is IOException ||
                 raw.contains("network", ignoreCase = true) ||
                 raw.contains("mạng", ignoreCase = true) ->
                 "Mất kết nối mạng. Dữ liệu đã nhập vẫn được giữ lại, vui lòng thử lại."
-            raw.isNotBlank() -> raw
-            else -> "Đã xảy ra lỗi khi xử lý tài liệu. Vui lòng thử lại."
+            else -> "Chưa thể xử lý tài liệu. Vui lòng thử lại sau."
         }
     }
 }

@@ -2,6 +2,9 @@ package vn.unishare.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Base64
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.StorageException
@@ -15,17 +18,31 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import vn.unishare.data.remote.readAtMost
 import vn.unishare.domain.repository.DocumentDraft
 import vn.unishare.domain.repository.DocumentUploadRepository
 import vn.unishare.domain.repository.DraftMetadata
 import vn.unishare.domain.repository.PreviewUpload
 import vn.unishare.domain.repository.UploadProgress
 import vn.unishare.domain.repository.UploadedFile
+import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+internal class InvalidSelectedPdfException(
+    message: String = "Tệp PDF không hợp lệ. Vui lòng chọn lại tài liệu."
+) : IllegalArgumentException(message)
+
+internal class DocumentUploadApiException(
+    val httpStatus: Int,
+    val invalidPdf: Boolean,
+    val backendCode: String? = null,
+    val requestId: String? = null
+) : Exception()
 
 class DocumentUploadRepositoryImpl(
     private val context: Context,
@@ -125,59 +142,45 @@ class DocumentUploadRepositoryImpl(
             "Staging path does not belong to current user"
         }
 
-        val localHash = hashLocalFile(uri, maxBytes)
-        val reference = storage.reference.child(path)
-
-        val existing = readMetadataIfExists(reference)
-
-        if (existing != null) {
-            return recoverExisting(
-                reference = reference,
-                expectedHash = localHash,
-                expectedContentType = contentType,
-                maxBytes = maxBytes
-            )
-        }
-
-        val metadata = StorageMetadata.Builder()
-            .setContentType(contentType)
-            .build()
-
-        val task = reference.putFile(uri, metadata)
-
+        val started = SystemClock.elapsedRealtime()
+        var stage = if (contentType == "application/pdf") "UPLOAD_PDF" else "UPLOAD_PREVIEW"
+        var size: Long? = null
         try {
-            awaitUpload(task, onProgress)
+            val local = withContext(Dispatchers.IO) {
+                val input = context.contentResolver.openInputStream(uri)
+                    ?: throw IOException("Cannot open selected file")
+                input.use { hashFile(it, maxBytes, includeMd5 = true) }
+            }
+            size = local.size
+            val reference = storage.reference.child(path)
+            if (readMetadataIfExists(reference) != null) {
+                stage = "VERIFY_STAGING"
+                return recoverExisting(reference, local, contentType)
+            }
+
+            val metadata = StorageMetadata.Builder().setContentType(contentType).build()
+            val uploaded = try {
+                awaitUpload(reference.putFile(uri, metadata), onProgress)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // A completed upload may have lost its response.
+                try {
+                    return recoverExisting(reference, local, contentType)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    throw error
+                }
+            }
+            stage = "VERIFY_STAGING"
+            return recoverExisting(reference, local, contentType, uploaded.metadata?.generation)
         } catch (error: CancellationException) {
-            // User cancellation must remain cancellation.
-            // Do not attempt recovery in a cancelled coroutine.
             throw error
         } catch (error: Exception) {
-            // A completed upload might lose its response.
-            // Recover only when the stored bytes match.
-            val recovered = try {
-                recoverExisting(
-                    reference = reference,
-                    expectedHash = localHash,
-                    expectedContentType = contentType,
-                    maxBytes = maxBytes
-                )
-            } catch (_: Exception) {
-                null
-            }
-
-            if (recovered != null) {
-                return recovered
-            }
-
+            logFailure(stage, started, error, size)
             throw error
         }
-
-        return recoverExisting(
-            reference = reference,
-            expectedHash = localHash,
-            expectedContentType = contentType,
-            maxBytes = maxBytes
-        )
     }
 
     private suspend fun readMetadataIfExists(
@@ -199,99 +202,69 @@ class DocumentUploadRepositoryImpl(
 
     private suspend fun recoverExisting(
         reference: StorageReference,
-        expectedHash: String,
+        expected: FileHash,
         expectedContentType: String,
-        maxBytes: Long
+        freshGeneration: String? = null
     ): UploadedFile {
         val before = reference.metadata.await()
+        require(before.contentType == expectedContentType) { "Existing file MIME differs" }
+        val generation = before.generation ?: error("Existing file generation missing")
+        require(before.sizeBytes == expected.size) { "Existing file size differs" }
 
-        require(before.contentType == expectedContentType) {
-            "Existing file MIME differs"
-        }
-
-        val generation = before.generation
-            ?: throw IllegalStateException(
-                "Existing file generation missing"
-            )
-
-        val size = before.sizeBytes
-
-        require(size in 1..maxBytes) {
-            "Existing file size invalid"
-        }
-
-        val bytes = reference.getBytes(maxBytes).await()
-
-        require(sha256(bytes) == expectedHash) {
-            "Existing file has different content"
-        }
-
-        val after = reference.metadata.await()
-
-        require(after.generation == generation) {
-            "Existing file changed during recovery"
-        }
-
-        // Firebase StorageReference.path may start with "/".
-        // Our backend contract uses paths without that slash.
-        val normalizedPath = reference.path.removePrefix("/")
-
-        return UploadedFile(
-            path = normalizedPath,
-            generation = generation
-        )
-    }
-
-    private suspend fun hashLocalFile(
-        uri: Uri,
-        maxBytes: Long
-    ): String = withContext(Dispatchers.IO) {
-        val digest = MessageDigest.getInstance("SHA-256")
-
-        val stream = context.contentResolver.openInputStream(uri)
-            ?: throw IllegalArgumentException(
-                "Cannot open selected file"
-            )
-
-        stream.use { input ->
-            val buffer = ByteArray(8192)
-            var total = 0L
-
-            while (true) {
-                val count = input.read(buffer)
-                if (count == -1) break
-
-                total += count
-
-                require(total <= maxBytes) {
-                    "Selected file exceeds maximum size"
+        require(freshGeneration == null || freshGeneration == generation) { "Uploaded generation differs" }
+        val storageMd5 = before.md5Hash
+        if (generation == freshGeneration && !storageMd5.isNullOrBlank()) {
+            require(storageMd5 == expected.md5) { "Uploaded checksum differs" }
+        } else {
+            // Verify actual bytes for retries and Storage responses without a checksum.
+            var remoteHash: String? = null
+            val task = reference.getStream { _, input ->
+                remoteHash = try {
+                    input.use { hashFile(it, expected.size, includeMd5 = false).sha256 }
+                } catch (_: IllegalArgumentException) {
+                    throw IOException("Existing file size differs")
                 }
-
-                digest.update(buffer, 0, count)
             }
-
-            require(total > 0L) {
-                "Selected file is empty"
+            try {
+                task.await()
+            } catch (error: CancellationException) {
+                task.cancel()
+                throw error
             }
+            require(remoteHash == expected.sha256) { "Existing file has different content" }
+            require(reference.metadata.await().generation == generation) { "Existing file changed during recovery" }
         }
 
-        digest.digest().joinToString("") {
-            "%02x".format(it.toInt() and 0xff)
-        }
+        return UploadedFile(reference.path.removePrefix("/"), generation)
     }
 
-    private fun sha256(bytes: ByteArray): String {
-        return MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") {
-                "%02x".format(it.toInt() and 0xff)
-            }
+    private data class FileHash(val size: Long, val sha256: String, val md5: String?)
+
+    private fun hashFile(input: InputStream, maxBytes: Long, includeMd5: Boolean): FileHash {
+        val sha256 = MessageDigest.getInstance("SHA-256")
+        val md5 = if (includeMd5) MessageDigest.getInstance("MD5") else null
+        val buffer = ByteArray(8192)
+        var total = 0L
+        while (true) {
+            val count = input.read(buffer)
+            if (count == -1) break
+            total += count
+            require(total <= maxBytes) { "Selected file exceeds maximum size" }
+            sha256.update(buffer, 0, count)
+            md5?.update(buffer, 0, count)
+        }
+        require(total > 0L) { "Selected file is empty" }
+        return FileHash(
+            total,
+            sha256.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) },
+            md5?.digest()?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
+        )
     }
 
     private suspend fun awaitUpload(
         task: UploadTask,
         onProgress: (UploadProgress) -> Unit
-    ): Unit = suspendCancellableCoroutine { continuation ->
+    ): UploadTask.TaskSnapshot = suspendCancellableCoroutine { continuation ->
 
         continuation.invokeOnCancellation {
             task.cancel()
@@ -308,9 +281,9 @@ class DocumentUploadRepositoryImpl(
             }
         }
 
-        task.addOnSuccessListener {
+        task.addOnSuccessListener { snapshot ->
             if (continuation.isActive) {
-                continuation.resume(Unit)
+                continuation.resume(snapshot)
             }
         }
 
@@ -383,12 +356,26 @@ class DocumentUploadRepositoryImpl(
         )
     }
 
+    private fun logFailure(stage: String, started: Long, error: Exception, size: Long? = null) {
+        val api = error as? DocumentUploadApiException
+        val storageCode = (error as? StorageException)?.errorCode
+        Log.w("UniShareUpload", "stage=$stage exception=${error.javaClass.simpleName} " +
+            "status=${api?.httpStatus} backendCode=${api?.backendCode} requestId=${api?.requestId} " +
+            "storageCode=$storageCode sizeBytes=$size durationMs=${SystemClock.elapsedRealtime() - started}")
+    }
+
     private suspend fun apiRequest(
         method: String,
         path: String,
         body: JSONObject,
         idempotencyKey: String? = null
     ): JSONObject {
+        val started = SystemClock.elapsedRealtime()
+        val stage = when {
+            path.endsWith("/publish") -> "PUBLISH"
+            path.endsWith("/drafts") -> "CREATE_DRAFT"
+            else -> null
+        }
         val user = auth.currentUser
             ?: throw IllegalStateException("Sign in required")
 
@@ -405,7 +392,7 @@ class DocumentUploadRepositoryImpl(
             try {
                 connection.requestMethod = method
                 connection.connectTimeout = 15000
-                connection.readTimeout = 30000
+                connection.readTimeout = if (stage == "PUBLISH") 65_000 else 30_000
                 connection.doOutput = true
 
                 connection.setRequestProperty(
@@ -438,17 +425,24 @@ class DocumentUploadRepositoryImpl(
                     } else {
                         connection.errorStream
                     }
-                )?.bufferedReader()?.use {
-                    it.readText()
-                }.orEmpty()
+                )?.use { String(it.readAtMost(16 * 1024), Charsets.UTF_8) }.orEmpty()
 
                 if (status !in 200..299) {
-                    throw IllegalStateException(
-                        "Backend HTTP $status: $responseText"
-                    )
+                    val error = runCatching { JSONObject(responseText).optJSONObject("error") }.getOrNull()
+                    val requestId = error?.optString("requestId")
+                        ?.takeIf { it.matches(Regex("[a-fA-F0-9-]{36}")) }
+                    val code = error?.optString("code")?.takeIf { it.matches(Regex("[A-Z_]{1,40}")) }
+                    val invalidPdf = code == "INVALID_PDF" ||
+                        (status == 409 && error?.optString("message") in setOf("Invalid PDF header", "Invalid PDF structure"))
+                    throw DocumentUploadApiException(status, invalidPdf, code, requestId)
                 }
 
                 JSONObject(responseText)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (stage != null) logFailure(stage, started, error)
+                throw error
             } finally {
                 connection.disconnect()
             }

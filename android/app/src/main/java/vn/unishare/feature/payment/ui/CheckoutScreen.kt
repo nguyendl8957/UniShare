@@ -8,6 +8,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,10 +48,22 @@ fun CheckoutScreen(
     onNavigateBack: () -> Unit,
     onShowSnackbar: (message: String) -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    val orderId = uiState.order?.orderId
+    var openedOrderId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(orderId, uiState.status, lifecycleState) {
+        if (orderId != null && openedOrderId != orderId && uiState.status == OrderStatus.PAID &&
+            lifecycleState == Lifecycle.State.RESUMED
+        ) {
+            delay(1400)
+            openedOrderId = orderId
+            onNavigateToReader(viewModel.docId)
+        }
+    }
 
     // Quản lý polling theo vòng đời màn hình: Tự động tải lại khi Resume và dừng khi Pause
     DisposableEffect(lifecycleOwner, viewModel) {
@@ -69,7 +85,12 @@ fun CheckoutScreen(
     LaunchedEffect(viewModel) {
         viewModel.events.collectLatest { event ->
             when (event) {
-                is CheckoutEvent.NavigateToReader -> onNavigateToReader(event.docId)
+                is CheckoutEvent.NavigateToReader -> {
+                    if (openedOrderId != viewModel.uiState.value.order?.orderId) {
+                        openedOrderId = viewModel.uiState.value.order?.orderId
+                        onNavigateToReader(event.docId)
+                    }
+                }
                 is CheckoutEvent.NavigateToAuth -> onNavigateToAuth(event.returnTarget)
                 is CheckoutEvent.NavigateBack -> onNavigateBack()
                 is CheckoutEvent.ShowSnackbar -> {
@@ -120,6 +141,7 @@ fun CheckoutScreenContent(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                     .height(56.dp)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -146,7 +168,7 @@ fun CheckoutScreenContent(
     ) { innerPadding ->
         // Trạng thái đang tải dữ liệu lần đầu
         if (uiState.isLoading && uiState.order == null) {
-            UiFeedback(state = UiFeedbackState.Loading)
+            UiFeedback(state = UiFeedbackState.Loading, modifier = Modifier.padding(innerPadding))
             return@Scaffold
         }
 
@@ -156,7 +178,8 @@ fun CheckoutScreenContent(
                 state = UiFeedbackState.Error(
                     message = uiState.networkError
                 ),
-                onRetry = onManualRefresh
+                onRetry = onManualRefresh,
+                modifier = Modifier.padding(innerPadding)
             )
             return@Scaffold
         }
@@ -167,7 +190,8 @@ fun CheckoutScreenContent(
                 state = UiFeedbackState.Error(
                     message = uiState.businessError
                 ),
-                onRetry = onManualRefresh
+                onRetry = onManualRefresh,
+                modifier = Modifier.padding(innerPadding)
             )
             return@Scaffold
         }
@@ -541,14 +565,14 @@ private fun ExpiredSection(onRetry: () -> Unit) {
                 color = Color(0xFF9A3412)
             )
             Text(
-                text = "Đơn hàng đã quá hạn 15 phút. Nếu bạn đã chuyển tiền sau khi hết hạn, vui lòng không chuyển lại và liên hệ hỗ trợ để được kiểm tra.",
+                text = "Đơn hàng đã quá hạn 15 phút. Nếu đã chuyển tiền, hãy kiểm tra trạng thái hoặc liên hệ hỗ trợ trước khi chuyển thêm.",
                 fontSize = 12.sp,
                 color = Color(0xFFC2410C),
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(6.dp))
             UniButton(
-                text = "Tạo đơn thanh toán mới",
+                text = "Kiểm tra trạng thái giao dịch",
                 onClick = onRetry,
                 modifier = Modifier.testTag("btn_retry_expired")
             )

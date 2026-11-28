@@ -3,7 +3,9 @@ package vn.unishare.feature.auth.ui
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,7 +27,8 @@ const val RETURN_TARGET_KEY = "return_target"
 class AuthViewModel(
     private val authRepository: AuthRepository,
     private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
-    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
+    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val requireFreshSignIn: Boolean = false
 ) : ViewModel() {
 
     private val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
@@ -45,19 +48,24 @@ class AuthViewModel(
     private val _eventChannel = Channel<AuthEvent>(Channel.BUFFERED)
     val events = _eventChannel.receiveAsFlow()
 
+    private var freshSignInSucceeded = false
+
     init {
         // Quan sát phiên đăng nhập từ A02: khi chuyển sang SignedIn thì tiêu thụ returnTarget đúng 1 lần
         viewModelScope.launch(mainDispatcher) {
             authRepository.session.collect { currentSession ->
                 _uiState.update { it.copy(session = currentSession) }
-                if (currentSession is AuthSession.SignedIn && !_uiState.value.isReturnTargetConsumed) {
-                    val target = _uiState.value.returnTarget
-                    _uiState.update { it.copy(isReturnTargetConsumed = true) }
-                    savedStateHandle[RETURN_TARGET_KEY] = null
-                    _eventChannel.send(AuthEvent.NavigateToTarget(target))
-                }
+                if (currentSession is AuthSession.SignedIn) completeSignIn()
             }
         }
+    }
+
+    private fun completeSignIn() {
+        if (_uiState.value.isReturnTargetConsumed || (requireFreshSignIn && !freshSignInSucceeded)) return
+        val target = _uiState.value.returnTarget
+        savedStateHandle[RETURN_TARGET_KEY] = null
+        _uiState.update { it.copy(isReturnTargetConsumed = true) }
+        _eventChannel.trySend(AuthEvent.NavigateToTarget(target))
     }
 
     fun onEmailChange(newEmail: String) {
@@ -137,6 +145,9 @@ class AuthViewModel(
                             )
                         }
                         _eventChannel.send(AuthEvent.ShowMessage(msg))
+                    } else {
+                        freshSignInSucceeded = true
+                        if (authRepository.session.value is AuthSession.SignedIn) completeSignIn()
                     }
                 },
                 onFailure = { error ->
@@ -154,6 +165,27 @@ class AuthViewModel(
     /**
      * Xử lý kết quả hoặc hủy khi bấm Đăng nhập với Google (adapter thật do A02 cung cấp)
      */
+    fun signInWithGoogle(requestIdToken: suspend () -> String) {
+        if (_uiState.value.isLoading) return
+        _uiState.update { it.copy(isLoading = true, generalError = null) }
+        viewModelScope.launch(mainDispatcher) {
+            try {
+                authRepository.signInWithGoogle(requestIdToken()).getOrThrow()
+                freshSignInSucceeded = true
+                if (authRepository.session.value is AuthSession.SignedIn) completeSignIn()
+            } catch (_: GetCredentialCancellationException) {
+                // Người dùng đã đóng trình chọn tài khoản.
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _uiState.update { it.copy(generalError = error.message?.takeIf { msg -> msg.startsWith("UniShare") }
+                    ?: "Không đăng nhập được với Google. Vui lòng thử lại hoặc dùng email.") }
+            } finally {
+                _uiState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+
     fun onGoogleSignInResult(result: Result<Unit>?) {
         if (_uiState.value.isLoading) return
         if (result == null) {

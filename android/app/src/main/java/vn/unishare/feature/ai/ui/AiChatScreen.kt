@@ -48,7 +48,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,7 +94,9 @@ fun AiChatScreen(
     onBottomNavSelected: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(docId, documentTitle) {
         viewModel.bindDocument(docId = docId, documentTitle = documentTitle)
@@ -105,7 +109,11 @@ fun AiChatScreen(
             uiState = uiState,
             onBackClick = onBackClick,
             onInputChanged = viewModel::onInputChanged,
-            onSendClick = viewModel::sendQuestion,
+            onSendClick = {
+                focusManager.clearFocus()
+                keyboard?.hide()
+                viewModel.sendQuestion()
+            },
             onSuggestionClick = viewModel::sendSuggestion,
             onRetryClick = viewModel::retryLastFailedMessage,
             onCitationClick = { page ->
@@ -136,7 +144,8 @@ fun AiChatScreenContent(
 
     LaunchedEffect(uiState.messages.size, uiState.isSending) {
         if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.lastIndex)
+            val latestRow = uiState.messages.size + if (uiState.isSending) 1 else 0
+            listState.animateScrollToItem(latestRow)
         }
     }
 
@@ -156,6 +165,7 @@ fun AiChatScreenContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.White)
+                    .imePadding()
             ) {
                 if (uiState.canCompose) {
                     AiComposerArea(
@@ -168,8 +178,7 @@ fun AiChatScreenContent(
                 UniBottomBar(
                     selectedRoute = "purchased",
                     onItemSelected = onBottomNavSelected,
-                    mode = UniAppMode.BUYER,
-                    modifier = Modifier.navigationBarsPadding()
+                    mode = UniAppMode.BUYER
                 )
             }
         }
@@ -219,7 +228,9 @@ fun AiChatScreenContent(
                                 when (message.role) {
                                     AiChatRole.USER -> UserMessageBubble(
                                         message = message,
-                                        onRetryClick = onRetryClick
+                                        onRetryClick = onRetryClick.takeIf {
+                                            (uiState.errorState as? AiChatErrorState.Transient)?.failedClientMessageId == message.clientMessageId
+                                        }
                                     )
 
                                     AiChatRole.ASSISTANT -> AssistantMessageBubble(
@@ -531,7 +542,7 @@ private fun AiStatusErrorBanner(
                         fontSize = 12.sp,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(
+                    if (errorState.failedClientMessageId != null) TextButton(
                         onClick = onRetryClick,
                         modifier = Modifier.testTag("btn_ai_retry_last")
                     ) {
@@ -551,7 +562,7 @@ private fun AiStatusErrorBanner(
 @Composable
 private fun UserMessageBubble(
     message: AiChatMessage,
-    onRetryClick: () -> Unit
+    onRetryClick: (() -> Unit)?
 ) {
     Column(
         horizontalAlignment = Alignment.End,
@@ -577,12 +588,12 @@ private fun UserMessageBubble(
         }
         if (message.deliveryState == AiMessageDeliveryState.FAILED) {
             Text(
-                text = "Gửi thất bại • Bấm thử lại",
+                text = if (onRetryClick != null) "Gửi thất bại • Bấm thử lại" else "Gửi thất bại",
                 color = Color(0xFFDC2626),
                 fontSize = 11.sp,
                 modifier = Modifier
                     .padding(top = 4.dp)
-                    .clickable(onClick = onRetryClick)
+                    .then(if (onRetryClick != null) Modifier.clickable(onClick = onRetryClick) else Modifier)
             )
         }
     }
@@ -731,7 +742,6 @@ private fun AiComposerArea(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White)
-            .imePadding()
             .padding(top = 8.dp, bottom = 8.dp)
     ) {
         Row(

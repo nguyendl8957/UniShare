@@ -81,6 +81,7 @@ test("A08 AI disabled by default", async (t) => {
 
       assert.equal(res.status, 503, JSON.stringify(res.body));
       assert.equal(res.body.answer, undefined);
+      assert.equal(res.body.error.code, "AI_DISABLED");
     });
 
     await t.test("503 when flag is false", async () => {
@@ -98,6 +99,17 @@ test("A08 AI disabled by default", async (t) => {
 
       assert.equal(res.status, 503, JSON.stringify(res.body));
       assert.equal(res.body.answer, undefined);
+      assert.equal(res.body.error.code, "AI_NOT_ALLOWED");
+    });
+    await t.test("503 when enabled for UID but secret is missing", async () => {
+      process.env.UNISHARE_AI_TEST_UIDS = user.localId;
+      delete process.env.GEMINI_API_KEY;
+
+      const res = await ask();
+
+      assert.equal(res.status, 503);
+      assert.equal(res.body.error.code, "AI_UNCONFIGURED");
+      assert.ok(res.body.error.requestId);
     });
   } finally {
     if (previousFlag === undefined) {

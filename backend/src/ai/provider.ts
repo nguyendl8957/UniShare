@@ -7,6 +7,15 @@ export type AiProviderReply = {
   actualTokens: number;
 };
 
+export class AiProviderError extends Error {
+  constructor(
+    readonly code: "GEMINI_RATE_LIMIT" | "GEMINI_TIMEOUT" | "GEMINI_UNAVAILABLE" | "GEMINI_RESPONSE_INVALID",
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 export interface AiProvider {
   ask(input: {
     docId: string;

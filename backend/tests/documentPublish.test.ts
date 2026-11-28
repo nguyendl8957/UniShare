@@ -33,9 +33,11 @@ async function createUser() {
   return { uid: data.localId, token: data.idToken };
 }
 
-async function createValidPdf(): Promise<Buffer> {
+async function createValidPdf(pageCount = 1): Promise<Buffer> {
   const document = await PDFDocument.create();
-  document.addPage([595, 842]);
+  for (let i = 0; i < pageCount; i++) {
+    document.addPage([595, 842]).drawText(`UniShare PDF page ${i + 1}`);
+  }
 
   return Buffer.from(await document.save());
 }
@@ -147,7 +149,52 @@ test("A04 publish integration", async (t) => {
     assert.equal(catalog.exists, false);
   });
 
-  await t.test("Seller A publishes valid PDF and PNG", async () => {
+  const validPdf = await createValidPdf();
+  const pdfCases = [
+    { name: "empty file", bytes: Buffer.alloc(0), mime: "application/pdf", code: "INVALID_REQUEST" },
+    { name: "renamed text file", bytes: Buffer.from("Not a PDF"), mime: "application/pdf", code: "INVALID_PDF" },
+    { name: "truncated PDF", bytes: validPdf.subarray(0, -10), mime: "application/pdf", code: "INVALID_PDF" },
+    { name: "invalid PDF structure", bytes: Buffer.from("%PDF-1.7\n%%EOF"), mime: "application/pdf", code: "INVALID_PDF" },
+    { name: "wrong MIME", bytes: validPdf, mime: "application/octet-stream", code: "INVALID_REQUEST" },
+    { name: "oversized PDF", bytes: Buffer.alloc(25 * 1024 * 1024 + 1), mime: "application/pdf", code: "INVALID_REQUEST" }
+  ];
+
+  for (const pdfCase of pdfCases) {
+    await t.test(`Rejects ${pdfCase.name} without listing or version`, async () => {
+      await pdfFile.save(pdfCase.bytes, { metadata: { contentType: pdfCase.mime } });
+      const [metadata] = await pdfFile.getMetadata();
+      const response = await request(app)
+        .post(`/v1/documents/${docId}/publish`)
+        .set("Authorization", `Bearer ${sellerA.token}`)
+        .send({ ...payload, pdfGeneration: String(metadata.generation) });
+
+      assert.equal(response.status, 409);
+      assert.equal(response.body.error.code, pdfCase.code);
+      assert.equal((await db.collection("catalog").doc(docId).get()).exists, false);
+      assert.equal((await db.collection("documents").doc(docId).collection("versions").doc(versionId).get()).exists, false);
+      assert.equal((await bucket.file(`private/${docId}/${versionId}/source.pdf`).exists())[0], false);
+    });
+  }
+
+  const multiPagePdf = Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    Buffer.from("% export preamble\n"),
+    await createValidPdf(2)
+  ]);
+  await pdfFile.save(multiPagePdf, { metadata: { contentType: "application/pdf" } });
+  const [updatedMetadata] = await pdfFile.getMetadata();
+
+  await t.test("Rejects stale staging generation", async () => {
+    const response = await request(app)
+      .post(`/v1/documents/${docId}/publish`)
+      .set("Authorization", `Bearer ${sellerA.token}`)
+      .send(payload);
+    assert.equal(response.status, 409);
+    assert.equal(response.body.error.message, "Staging generation mismatch");
+  });
+  payload.pdfGeneration = String(updatedMetadata.generation);
+
+  await t.test("Seller A publishes two-page PDF with a BOM after failed attempts", async () => {
     const response = await request(app)
       .post(`/v1/documents/${docId}/publish`)
       .set("Authorization", `Bearer ${sellerA.token}`)
@@ -178,6 +225,9 @@ test("A04 publish integration", async (t) => {
       .exists();
 
     assert.equal(privateExists, true);
+    const [publishedBytes] = await bucket.file(`private/${docId}/${versionId}/source.pdf`).download();
+    assert.deepEqual(publishedBytes, multiPagePdf);
+    assert.equal((await PDFDocument.load(publishedBytes)).getPageCount(), 2);
   });
 
   await t.test("Publish retry does not duplicate listing", async () => {

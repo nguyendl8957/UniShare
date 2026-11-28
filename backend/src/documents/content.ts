@@ -1,8 +1,9 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { getStorage } from "firebase-admin/storage";
 
 import { requireAuth } from "../shared/firebaseAuth";
 import { sendApiError } from "../shared/httpErrors";
+import { hasPdfHeader } from "./pdfValidation";
 import {
   authorizePdfRead,
   DocumentAccessError
@@ -11,7 +12,6 @@ import {
 export const contentRouter = Router();
 
 const DOC_ID_PATTERN = /^[a-zA-Z0-9_-]{1,150}$/;
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 contentRouter.get(
   "/:docId/content",
@@ -51,16 +51,6 @@ contentRouter.get(
     try {
       const authorized = await authorizePdfRead(uid, docId);
 
-      if (authorized.sizeBytes > MAX_PDF_BYTES) {
-        sendApiError(
-          res,
-          404,
-          "NOT_FOUND",
-          "PDF is unavailable"
-        );
-        return;
-      }
-
       // Pin the exact immutable generation granted to Buyer.
       const file = getStorage()
         .bucket(bucketName)
@@ -88,8 +78,7 @@ contentRouter.get(
 
       if (
         pdfBytes.length !== authorized.sizeBytes ||
-        pdfBytes.length > MAX_PDF_BYTES ||
-        pdfBytes.subarray(0, 5).toString("ascii") !== "%PDF-"
+        !hasPdfHeader(pdfBytes)
       ) {
         sendApiError(
           res,
@@ -101,7 +90,15 @@ contentRouter.get(
       }
 
       // Recheck entitlement before releasing PDF bytes.
-      await authorizePdfRead(uid, docId);
+      const current = await authorizePdfRead(uid, docId);
+      if (
+        current.versionId !== authorized.versionId ||
+        current.orderId !== authorized.orderId ||
+        current.pdfGeneration !== authorized.pdfGeneration ||
+        current.sizeBytes !== authorized.sizeBytes
+      ) {
+        throw new DocumentAccessError(403, "ENTITLEMENT_CHANGED");
+      }
 
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(

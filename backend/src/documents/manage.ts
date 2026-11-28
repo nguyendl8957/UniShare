@@ -128,6 +128,7 @@ manageRouter.patch(
           transaction.create(catalogRef, {
             title: document.title,
             titleNormalized,
+            description: typeof document.description === "string" ? document.description : "",
             subjectId: document.subject,
             categoryId: document.category,
             priceVnd: document.priceVnd,

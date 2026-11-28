@@ -1,8 +1,15 @@
 package vn.unishare.feature.seller
 
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -11,8 +18,11 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import vn.unishare.saveRegressionScreenshot
 import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import vn.unishare.feature.seller.ui.ALLOWED_PDF_MIME
@@ -26,7 +36,7 @@ import vn.unishare.feature.seller.ui.UploadWizardViewModel
 class SellerUploadFlowTest {
 
     @get:Rule
-    val composeTestRule = createComposeRule()
+    val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
     fun threeStepWizard_backPreservesForm_andPublishCallsOnce() {
@@ -234,6 +244,46 @@ class SellerUploadFlowTest {
         composeTestRule.onNodeWithTag("btn_retry_publish").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("status_published_success").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun emptyManagementHasOnePublishActionAndRestoresStatusIconsOnExit() {
+        val viewModel = UploadWizardViewModel(
+            repository = FakeDocumentUploadRepository(initialDocuments = emptyList()),
+            mainDispatcher = Dispatchers.Main.immediate,
+            autoLoadDocuments = false
+        )
+        var showManagement by mutableStateOf(true)
+        var publishClicks = 0
+        composeTestRule.activityRule.scenario.onActivity {
+            it.enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(0, 0))
+        }
+        composeTestRule.setContent {
+            if (showManagement) {
+                UniShareTheme(mode = UniAppMode.SELLER) {
+                    SellerDocumentsScreen(
+                        viewModel = viewModel,
+                        onBackClick = { showManagement = false },
+                        onCreateDocumentClick = { publishClicks++ }
+                    )
+                }
+            }
+        }
+        composeTestRule.onNodeWithTag("seller_docs_empty").assertIsDisplayed()
+        saveRegressionScreenshot("seller-management-empty")
+        composeTestRule.onNodeWithTag("fab_create_document").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Đăng tài liệu ngay").assertIsDisplayed().performClick()
+        assertEquals(1, publishClicks)
+
+        composeTestRule.runOnIdle {
+            val window = composeTestRule.activity.window
+            assertFalse(WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars)
+        }
+        composeTestRule.onNodeWithTag("btn_seller_manage_back").performClick()
+        composeTestRule.runOnIdle {
+            val window = composeTestRule.activity.window
+            assertTrue(WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars)
+        }
     }
 
     @Test

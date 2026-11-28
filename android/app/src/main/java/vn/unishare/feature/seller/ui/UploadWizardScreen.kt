@@ -3,7 +3,28 @@ package vn.unishare.feature.seller.ui
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import vn.unishare.data.repository.InvalidSelectedPdfException
+import vn.unishare.data.remote.PDF_HEADER_PROBE_BYTES
+import android.os.SystemClock
+import android.util.Log
+import vn.unishare.data.remote.readAtMost
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -54,6 +75,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,7 +131,8 @@ fun UploadWizardScreen(
     onPickPdfOverride: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val state by viewModel.wizardState.collectAsState()
+    val state by viewModel.wizardState.collectAsStateWithLifecycle()
+    var showExitConfirm by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -121,12 +144,29 @@ fun UploadWizardScreen(
         }
     }
 
+    val scope = rememberCoroutineScope()
+    var pdfCheck by remember { mutableStateOf<Job?>(null) }
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            val resolved = resolveSelectedPdfFile(context, uri)
-            viewModel.selectPdfFile(resolved)
+            pdfCheck?.cancel()
+            pdfCheck = scope.launch {
+                viewModel.clearPdfFile()
+                val started = SystemClock.elapsedRealtime()
+                try {
+                    val selected = withContext(Dispatchers.IO) { resolveSelectedPdfFile(context, uri) }
+                    viewModel.selectPdfFile(selected)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: InvalidSelectedPdfException) {
+                    Log.w("UniShareUpload", "stage=PDF_SELECTION exception=${error.javaClass.simpleName} durationMs=${SystemClock.elapsedRealtime() - started}")
+                    viewModel.rejectSelectedPdf(error.message.orEmpty())
+                } catch (error: Exception) {
+                    Log.w("UniShareUpload", "stage=PDF_SELECTION exception=${error.javaClass.simpleName} durationMs=${SystemClock.elapsedRealtime() - started}")
+                    viewModel.rejectSelectedPdf("Chưa đọc được tệp PDF. Vui lòng chọn lại tài liệu.")
+                }
+            }
         }
     }
 
@@ -137,35 +177,59 @@ fun UploadWizardScreen(
     }
     val launchCameraCapture: () -> Unit = onCapturePreviewImageOverride ?: launchImagePicker
     val launchPdfPicker: () -> Unit = onPickPdfOverride ?: {
-        pdfPickerLauncher.launch(arrayOf(ALLOWED_PDF_MIME))
+        pdfPickerLauncher.launch(arrayOf(ALLOWED_PDF_MIME, "application/octet-stream"))
     }
 
-    val handleBack: () -> Unit = {
-        if (!state.isBusy) {
-            if (state.currentStep == UploadWizardStep.PREVIEW_IMAGES) {
-                onClose()
-            } else {
-                viewModel.goToPreviousStep()
-            }
+    val requestClose = {
+        if (state.isBusy || (state.uploadPublishState !is UploadPublishState.Published &&
+                (state.previewImages.isNotEmpty() || state.selectedPdf != null || state.title.isNotBlank())
+            )
+        ) {
+            showExitConfirm = true
+        } else {
+            onClose()
+        }
+    }
+    val handleBack = {
+        if (state.isBusy || state.currentStep == UploadWizardStep.PREVIEW_IMAGES) {
+            requestClose()
+        } else {
+            viewModel.goToPreviousStep()
         }
     }
 
-    BackHandler(enabled = true) {
-        handleBack()
+    BackHandler(onBack = handleBack)
+    if (showExitConfirm) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirm = false },
+            title = { Text("Thoát đăng bán?") },
+            text = {
+                Text(if (state.isBusy) "Tiến trình tải lên sẽ dừng. Nếu đã gửi yêu cầu xuất bản, hãy kiểm tra mục Quản lý."
+                    else "Các thay đổi chưa lưu trong biểu mẫu sẽ mất.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.cancelUpload()
+                    onClose()
+                }) { Text("Thoát") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitConfirm = false }) { Text("Ở lại") }
+            }
+        )
     }
 
     UploadWizardContent(
         state = state,
         onBackClick = handleBack,
-        onCloseClick = {
-            if (!state.isBusy) onClose()
-        },
+        onCloseClick = requestClose,
         onToggleFlash = viewModel::toggleFlash,
         onToggleCameraFacing = viewModel::toggleCameraFacing,
         onSelectPreviewIndex = viewModel::selectPreviewImage,
         onRemovePreviewImage = viewModel::removePreviewImage,
         onPickPreviewImage = launchImagePicker,
         onCapturePreviewImage = launchCameraCapture,
+        showCameraControls = onCapturePreviewImageOverride != null,
         onStep1Next = { viewModel.validateStep1AndNext() },
         onPickPdf = launchPdfPicker,
         onRemovePdf = viewModel::clearPdfFile,
@@ -217,7 +281,8 @@ fun UploadWizardContent(
     onCancelUploadClick: () -> Unit,
     onRetryPublishClick: () -> Unit,
     onPublishedDoneClick: (SellerDocumentItem) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showCameraControls: Boolean = false
 ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -227,7 +292,7 @@ fun UploadWizardContent(
                 WizardTopAppBar(
                     onBackClick = onBackClick,
                     onCloseClick = onCloseClick,
-                    actionsEnabled = !state.isBusy
+                    actionsEnabled = true
                 )
                 WizardStepperBar(currentStep = state.currentStep)
             }
@@ -237,7 +302,8 @@ fun UploadWizardContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .navigationBarsPadding()
+                .consumeWindowInsets(innerPadding)
+                .imePadding()
         ) {
             when (state.currentStep) {
                 UploadWizardStep.PREVIEW_IMAGES -> {
@@ -249,6 +315,7 @@ fun UploadWizardContent(
                         onRemovePreviewImage = onRemovePreviewImage,
                         onPickPreviewImage = onPickPreviewImage,
                         onCapturePreviewImage = onCapturePreviewImage,
+                        showCameraControls = showCameraControls,
                         onNextClick = onStep1Next
                     )
                 }
@@ -437,7 +504,8 @@ private fun Step1PreviewImagesBody(
     onRemovePreviewImage: (String) -> Unit,
     onPickPreviewImage: () -> Unit,
     onCapturePreviewImage: () -> Unit,
-    onNextClick: () -> Unit
+    onNextClick: () -> Unit,
+    showCameraControls: Boolean
 ) {
     val activePreview = state.previewImages.getOrNull(state.selectedPreviewIndex)
 
@@ -462,7 +530,7 @@ private fun Step1PreviewImagesBody(
                 .testTag("step1_preview_frame")
         ) {
             if (activePreview != null) {
-                PreviewPlaceholderSheet(
+                SelectedImagePreview(
                     image = activePreview,
                     index = state.selectedPreviewIndex + 1,
                     total = state.previewImages.size,
@@ -491,7 +559,7 @@ private fun Step1PreviewImagesBody(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Chọn từ Thư viện hoặc nhấn nút chụp bên dưới (tối đa $MAX_PREVIEW_IMAGES ảnh)",
+                        text = "Chọn tối đa $MAX_PREVIEW_IMAGES ảnh từ thư viện.",
                         color = Color(0xFFCBD5E1),
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center
@@ -499,7 +567,7 @@ private fun Step1PreviewImagesBody(
                 }
             }
 
-            // Nút bật/tắt flash góc trên trái
+            if (showCameraControls) {
             Surface(
                 color = if (state.isFlashEnabled) SellerPrimaryBlue else Color(0xB3282720),
                 shape = CircleShape,
@@ -541,6 +609,8 @@ private fun Step1PreviewImagesBody(
                 }
             }
 
+            }
+
             // Nhãn hướng dẫn phía dưới khung
             Surface(
                 color = Color(0xCC4B5367),
@@ -550,7 +620,7 @@ private fun Step1PreviewImagesBody(
                     .padding(bottom = 12.dp)
             ) {
                 Text(
-                    text = "Chụp ảnh rõ nét để có preview tốt nhất",
+                    text = "Dùng ảnh rõ nét để người mua dễ xem",
                     color = Color.White,
                     fontSize = 10.5.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -693,8 +763,7 @@ private fun Step1PreviewImagesBody(
                 )
             }
 
-            // Nút tròn chụp ảnh ở giữa
-            Box(
+            if (showCameraControls) Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(76.dp)
@@ -737,78 +806,48 @@ private fun Step1PreviewImagesBody(
 }
 
 @Composable
-private fun PreviewPlaceholderSheet(
+private fun SelectedImagePreview(
     image: SelectedPreviewImage,
     index: Int,
     total: Int,
     modifier: Modifier = Modifier
 ) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .background(
-                Brush.linearGradient(listOf(Color(0xFFEFF6FF), Color(0xFFDBEAFE)))
-            )
-            .padding(24.dp)
-    ) {
-        Surface(
-            color = Color.White,
-            shape = RoundedCornerShape(8.dp),
-            shadowElevation = 2.dp,
-            modifier = Modifier
-                .fillMaxWidth(0.84f)
-                .height(220.dp)
-        ) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.padding(18.dp)
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "Ảnh preview $index/$total",
-                        color = SellerPrimaryBlue,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = formatFileSize(image.sizeBytes),
-                        color = SellerMutedText,
-                        fontSize = 11.sp
-                    )
-                }
-                Text(
-                    text = image.displayName,
-                    color = SellerNavyText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(SellerSoftSurface)
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.75f)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(SellerSoftSurface)
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.55f)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(SellerSoftSurface)
-                )
+    val resolver = LocalContext.current.contentResolver
+    val bitmap by produceState<Bitmap?>(null, image.uriString) {
+        value = null
+        value = try {
+            withContext(Dispatchers.IO) {
+                val uri = Uri.parse(image.uriString)
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                var sample = 1
+                while (maxOf(options.outWidth, options.outHeight) / sample > 1280) sample *= 2
+                options.inSampleSize = sample
+                options.inJustDecodeBounds = false
+                resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
+    }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        val preview = bitmap
+        if (preview == null) {
+            Text(
+                text = image.displayName,
+                color = Color.White,
+                modifier = Modifier.padding(24.dp),
+                textAlign = TextAlign.Center
+            )
+        } else {
+            androidx.compose.foundation.Image(
+                bitmap = preview.asImageBitmap(),
+                contentDescription = "Ảnh xem trước $index/$total",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
@@ -878,7 +917,7 @@ private fun Step2UploadPdfBody(
                 textAlign = TextAlign.Center
             )
             Text(
-                text = "(PDF, tối đa 50MB)",
+                text = "(PDF, tối đa ${MAX_PDF_BYTES / (1024 * 1024)} MiB)",
                 color = SellerMutedText,
                 fontSize = 12.sp
             )
@@ -1717,9 +1756,8 @@ private fun resolveSelectedPreviewImage(context: Context, uri: Uri): SelectedPre
 
 private fun resolveSelectedPdfFile(context: Context, uri: Uri): SelectedPdfFile {
     val resolver = context.contentResolver
-    val mime = resolver.getType(uri) ?: ALLOWED_PDF_MIME
     var name = "tai_lieu.pdf"
-    var size = 1_024_000L
+    var size: Long? = null
     resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
         ?.use { cursor ->
             if (cursor.moveToFirst()) {
@@ -1729,12 +1767,30 @@ private fun resolveSelectedPdfFile(context: Context, uri: Uri): SelectedPdfFile 
                 if (sizeIdx >= 0 && !cursor.isNull(sizeIdx)) size = cursor.getLong(sizeIdx)
             }
         }
-    return SelectedPdfFile(
-        uriString = uri.toString(),
-        displayName = name,
-        mimeType = mime,
-        sizeBytes = size
-    )
+    val reportedSize = size
+    val sizeError = "Dung lượng tệp PDF vượt quá giới hạn 25 MiB."
+    if (reportedSize != null && reportedSize > MAX_PDF_BYTES) throw InvalidSelectedPdfException(sizeError)
+    val actualSize = resolver.openInputStream(uri)?.use { input ->
+        val header = input.readAtMost(PDF_HEADER_PROBE_BYTES)
+        if (!String(header, Charsets.ISO_8859_1).contains("%PDF-")) {
+            throw InvalidSelectedPdfException()
+        }
+        if (reportedSize != null && reportedSize > 0) {
+            reportedSize
+        } else {
+            var total = header.size.toLong()
+            val buffer = ByteArray(8192)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > MAX_PDF_BYTES) throw InvalidSelectedPdfException(sizeError)
+            }
+            total
+        }
+    } ?: throw IllegalArgumentException("Chưa đọc được tệp PDF. Vui lòng chọn lại tài liệu.")
+
+    return SelectedPdfFile(uri.toString(), name, ALLOWED_PDF_MIME, actualSize)
 }
 
 @Preview(widthDp = 360, heightDp = 800, name = "Wizard Step 1 - 360dp")

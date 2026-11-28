@@ -1,6 +1,27 @@
 package vn.unishare.feature.profile.ui
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.compose.runtime.key
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.MaterialTheme
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,7 +39,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -45,7 +65,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -107,9 +126,21 @@ fun ProfileScreen(
     onOpenSellerUpload: () -> Unit = {},
     onOpenPublicSellerProfile: (String) -> Unit = {},
     onBottomNavSelected: (String) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenSellerRevenue: () -> Unit = {},
+    sellerProfile: Boolean = false
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    var confirmLogout by remember(uiState.activeUid) { mutableStateOf(false) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
+        it?.let { uri -> viewModel.onEditAvatarChange(uri.toString()) }
+    }
+    if (uiState.currentMode == UniAppMode.SELLER && !sellerProfile) {
+        LifecycleResumeEffect(viewModel) {
+            viewModel.loadSellerDashboard()
+            onPauseOrDispose {}
+        }
+    }
     var showSellerTermsDialog by remember { mutableStateOf(false) }
 
     val canCancelEdit = uiState.isEditingProfile &&
@@ -117,7 +148,7 @@ fun ProfileScreen(
         uiState.school.isNotBlank() &&
         uiState.faculty.isNotBlank()
 
-    BackHandler(enabled = canCancelEdit || uiState.currentMode == UniAppMode.SELLER) {
+    BackHandler(enabled = canCancelEdit || uiState.currentMode == UniAppMode.SELLER && !sellerProfile) {
         if (canCancelEdit) {
             viewModel.cancelEditingProfile()
         } else if (uiState.currentMode == UniAppMode.SELLER) {
@@ -126,6 +157,22 @@ fun ProfileScreen(
     }
 
     UniShareTheme(mode = uiState.currentMode) {
+        if (confirmLogout) {
+            AlertDialog(
+                onDismissRequest = { confirmLogout = false },
+                title = { Text("Đăng xuất") },
+                text = { Text("Bạn có chắc chắn muốn đăng xuất khỏi UniShare?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmLogout = false
+                        viewModel.signOut()
+                    }, modifier = Modifier.testTag("btn_confirm_logout")) { Text("Đăng xuất") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmLogout = false }) { Text("Hủy") }
+                }
+            )
+        }
         if (showSellerTermsDialog) {
             AlertDialog(
                 onDismissRequest = { showSellerTermsDialog = false },
@@ -170,7 +217,7 @@ fun ProfileScreen(
             onEditSchoolChange = viewModel::onEditSchoolChange,
             onEditFacultyChange = viewModel::onEditFacultyChange,
             onPickAvatar = {
-                viewModel.onEditAvatarChange("avatar://updated_${System.currentTimeMillis()}")
+                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onSaveProfile = viewModel::saveProfile,
             onSwitchMode = viewModel::switchMode,
@@ -187,7 +234,9 @@ fun ProfileScreen(
             onOpenPublicSellerProfile = {
                 uiState.activeUid?.let(onOpenPublicSellerProfile)
             },
-            onSignOut = viewModel::signOut,
+            onSignOut = { confirmLogout = true },
+            onOpenSellerRevenue = onOpenSellerRevenue,
+            sellerProfile = sellerProfile,
             onBottomNavSelected = { route ->
                 if (uiState.currentMode == UniAppMode.SELLER && route == "manage") {
                     viewModel.tryOpenProtectedSellerAction(onOpenSellerManagement)
@@ -223,9 +272,11 @@ fun ProfileScreenContent(
     onOpenPublicSellerProfile: () -> Unit,
     onSignOut: () -> Unit,
     onBottomNavSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenSellerRevenue: () -> Unit = {},
+    sellerProfile: Boolean = false
 ) {
-    val selectedBottomTab = if (uiState.currentMode == UniAppMode.SELLER) "home" else "profile"
+    val selectedBottomTab = if (uiState.currentMode == UniAppMode.SELLER && !sellerProfile) "home" else "profile"
     val screenBg = when {
         uiState.isEditingProfile || uiState.isGuest -> Color.White
         uiState.currentMode == UniAppMode.SELLER -> SellerDashboardBg
@@ -246,8 +297,7 @@ fun ProfileScreenContent(
             UniBottomBar(
                 selectedRoute = selectedBottomTab,
                 onItemSelected = onBottomNavSelected,
-                mode = uiState.currentMode,
-                modifier = Modifier.navigationBarsPadding()
+                mode = uiState.currentMode
             )
         }
     ) { innerPadding ->
@@ -255,6 +305,8 @@ fun ProfileScreenContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .imePadding()
         ) {
             when {
                 uiState.isRestoringSession || uiState.isLoadingProfile -> {
@@ -287,12 +339,28 @@ fun ProfileScreenContent(
                     )
                 }
 
+                uiState.currentMode == UniAppMode.SELLER && sellerProfile -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        ProfileAvatar(uiState.avatarPath, uiState.activeUid, Modifier.size(80.dp))
+                        Text(uiState.displayName, style = MaterialTheme.typography.headlineSmall)
+                        Text(uiState.school)
+                        Text(uiState.faculty)
+                        Button(onClick = onStartEdit) { Text("Chỉnh sửa hồ sơ") }
+                        OutlinedButton(onClick = onOpenPublicSellerProfile) { Text("Hồ sơ công khai") }
+                        TextButton(onClick = onSignOut) { Text("Đăng xuất") }
+                    }
+                }
+
                 uiState.currentMode == UniAppMode.SELLER && uiState.sellerEnabled -> {
                     SellerModeDashboardBody(
                         uiState = uiState,
                         onRetrySellerDashboard = onRetrySellerDashboard,
                         onOpenSellerManagement = onOpenSellerManagement,
                         onOpenSellerUpload = onOpenSellerUpload,
+                        onOpenSellerRevenue = onOpenSellerRevenue,
                         onOpenPublicSellerProfile = onOpenPublicSellerProfile
                     )
                 }
@@ -452,20 +520,7 @@ private fun ProfileSetupEditForm(
                     .clickable(enabled = !isSaving, onClick = onPickAvatar)
                     .testTag("btn_pick_avatar")
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(80.dp)
-                        .clip(CircleShape)
-                        .background(ProfileAvatarCircleBg)
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.nav_buyer_profile_unselected),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
+                ProfileAvatar(uiState.editAvatarPath, uiState.activeUid, Modifier.size(80.dp))
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -485,12 +540,12 @@ private fun ProfileSetupEditForm(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (uiState.editAvatarPath != null) "Đã chọn ảnh đại diện" else "Chọn ảnh đại diện",
+                text = if (uiState.editAvatarPath?.startsWith("content://") == true) "Đã chọn ảnh đại diện" else "Chọn ảnh đại diện",
                 color = ProfileSetupTitleNavy,
                 fontSize = 12.sp
             )
             Text(
-                text = "JPG, PNG (tối đa 5MB)",
+                text = "JPG, PNG hoặc WebP (tối đa 5 MB)",
                 color = ProfileSetupMuted,
                 fontSize = 10.5.sp
             )
@@ -643,7 +698,7 @@ private fun ProfileSetupEditForm(
                 Spacer(modifier = Modifier.width(8.dp))
             }
             Text(
-                text = "Hoàn tất",
+                text = if (isSaving && uiState.editAvatarPath?.startsWith("content://") == true) "Đang tải ảnh…" else "Hoàn tất",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -797,20 +852,7 @@ private fun BuyerProfileBody(
                     .size(84.dp)
                     .clickable(onClick = onStartEdit)
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(80.dp)
-                        .clip(CircleShape)
-                        .background(ProfileAvatarCircleBg)
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.nav_buyer_profile_unselected),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
+                ProfileAvatar(uiState.avatarPath, uiState.activeUid, Modifier.size(80.dp))
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -899,32 +941,6 @@ private fun BuyerProfileBody(
                 }
             }
         }
-
-        // Dãy huy hiệu thành tích
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            uiState.achievements.forEach { badge ->
-                AchievementBadgePill(badge = badge)
-            }
-            Surface(
-                color = Color(0xFFE5F0FF),
-                shape = RoundedCornerShape(100.dp)
-            ) {
-                Text(
-                    text = "+3",
-                    color = Color(0xFF294A7F),
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
 
         // Nút chuyển sang chế độ Người bán
         Surface(
@@ -1277,7 +1293,8 @@ private fun SellerModeDashboardBody(
     onRetrySellerDashboard: () -> Unit,
     onOpenSellerManagement: () -> Unit,
     onOpenSellerUpload: () -> Unit,
-    onOpenPublicSellerProfile: () -> Unit
+    onOpenPublicSellerProfile: () -> Unit,
+    onOpenSellerRevenue: () -> Unit
 ) {
     val dashboard = uiState.sellerDashboard
 
@@ -1299,20 +1316,7 @@ private fun SellerModeDashboardBody(
                 .clickable(onClick = onOpenPublicSellerProfile)
                 .padding(vertical = 4.dp)
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(ProfileAvatarCircleBg)
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.nav_buyer_profile_unselected),
-                    contentDescription = null,
-                    tint = SellerNavyText,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
+            ProfileAvatar(uiState.avatarPath, uiState.activeUid, Modifier.size(50.dp))
             Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.weight(1f)
@@ -1369,7 +1373,8 @@ private fun SellerModeDashboardBody(
                 label = "Doanh thu",
                 valueText = if (uiState.sellerDashboardLoaded) formatProfileVnd(dashboard.monthlyRevenueVnd) else "—",
                 footerLeft = "Tháng này",
-                footerRight = dashboard.revenueGrowthLabel,
+                footerRight = null,
+                onClick = onOpenSellerRevenue,
                 modifier = Modifier.weight(1f)
             )
             SellerMetricCard(
@@ -1389,7 +1394,7 @@ private fun SellerModeDashboardBody(
                 label = "Đơn hôm nay",
                 valueText = if (uiState.sellerDashboardLoaded) dashboard.todayOrderCount.toString() else "—",
                 footerLeft = "Tổng đơn",
-                footerRight = dashboard.orderGrowthLabel,
+                footerRight = null,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -1511,7 +1516,7 @@ private fun SellerModeDashboardBody(
         // Mục Đơn hàng gần đây
         SellerDashboardSectionHeader(
             title = "Đơn hàng gần đây",
-            onViewAllClick = onOpenSellerManagement,
+            onViewAllClick = onOpenSellerRevenue,
             viewAllTag = "btn_seller_recent_orders_all"
         )
 
@@ -1831,5 +1836,50 @@ private fun PreviewSellerDashboard() {
             onSignOut = {},
             onBottomNavSelected = {}
         )
+    }
+}
+
+@Composable
+private fun ProfileAvatar(path: String?, uid: String?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bitmap = key(path, uid) {
+        val loaded by produceState<Bitmap?>(null) {
+            value = try {
+                when {
+                    path?.startsWith("content://") == true -> withContext(Dispatchers.IO) {
+                        val uri = Uri.parse(path)
+                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                        var sample = 1
+                        while (maxOf(options.outWidth, options.outHeight) / sample > 512) sample *= 2
+                        options.inSampleSize = sample
+                        options.inJustDecodeBounds = false
+                        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                    }
+                    uid != null && path?.matches(Regex("avatars/${Regex.escape(uid)}/[a-f0-9-]{36}\\.jpg")) == true -> {
+                        val bytes = FirebaseStorage.getInstance().reference.child(path).getBytes(1024 * 1024).await()
+                        withContext(Dispatchers.IO) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                    }
+                    else -> null
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                null
+            }
+        }
+        loaded
+    }
+    Box(modifier.clip(CircleShape).background(ProfileAvatarCircleBg), contentAlignment = Alignment.Center) {
+        if (bitmap == null) {
+            Icon(
+                painterResource(R.drawable.nav_buyer_profile_unselected),
+                contentDescription = "Ảnh đại diện mặc định",
+                tint = SellerNavyText,
+                modifier = Modifier.fillMaxSize(0.48f)
+            )
+        } else {
+            Image(bitmap.asImageBitmap(), "Ảnh đại diện", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
     }
 }

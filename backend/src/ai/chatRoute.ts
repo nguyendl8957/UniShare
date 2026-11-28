@@ -12,12 +12,13 @@ import {
   finishAiRequest,
   getCachedAiAnswer
 } from "./quotaLifecycle";
-import { utcDay, AI_TOKENS_PER_REQUEST } from "./quota";
+import { utcDay } from "./quota";
 import {
   type AiProvider,
-  AiProviderNotSentError
+  AiProviderNotSentError,
+  AiProviderError
 } from "./provider";
-import { loadAuthorizedPdfText } from "./pdfSource";
+import { AiPdfSourceError, loadAuthorizedPdfText } from "./pdfSource";
 import { PdfTextError } from "./pdfText";
 import { createGeminiProvider } from "./geminiProvider";
 
@@ -30,33 +31,39 @@ function aiError(
   code: string,
   message: string
 ): void {
-  res.status(status).json({
-    error: { code, message, requestId: randomUUID() }
-  });
+  const requestId = randomUUID();
+  if (status >= 500) console.warn("AI request failed", { code, requestId });
+  res.status(status).json({ error: { code, message, requestId } });
 }
 
 export type AiProductionAccessConfig = {
   enabled?: string;
   apiKey?: string;
   allowlist?: string;
+  accessMode?: string;
 };
 
-// Fail closed: all three conditions must be satisfied.
+// Default to restricted access unless explicitly configured.
 export function isProductionAiAllowed(
   uid: string,
   config: AiProductionAccessConfig
 ): boolean {
+  return productionAiAccessError(uid, config) === null;
+}
+
+function productionAiAccessError(uid: string, config: AiProductionAccessConfig) {
+  if (config.enabled !== "true") return "AI_DISABLED";
   const allowedUids = (config.allowlist ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
 
-  return (
-    config.enabled === "true" &&
-    Boolean(config.apiKey?.trim()) &&
-    uid.length > 0 &&
-    allowedUids.includes(uid)
-  );
+  if (!uid) return "AI_NOT_ALLOWED";
+  if (config.accessMode !== "all_entitled" && !allowedUids.includes(uid)) {
+    return "AI_NOT_ALLOWED";
+  }
+  if (!config.apiKey?.trim()) return "AI_UNCONFIGURED";
+  return null;
 }
 // Production deliberately has no provider until explicitly configured.
 // Tests inject a fake provider without affecting the deployed route.
@@ -113,23 +120,20 @@ export function createAiChatRouter(
     }
 
     // The UID is verified by requireAuth, never taken from req.body.
-    const activeProvider = provider ?? (
-      isProductionAiAllowed(uid, {
-        enabled: process.env.UNISHARE_AI_ENABLED,
-        apiKey: process.env.GEMINI_API_KEY,
-        allowlist: process.env.UNISHARE_AI_TEST_UIDS
-      })
-        ? createGeminiProvider(process.env.GEMINI_API_KEY!)
-        : null
-    );
-
-    if (activeProvider === null) {
-      sendApiError(
-        res, 503, "SERVICE_UNAVAILABLE",
-        "AI provider is not configured"
-      );
-      return;
+    const config = {
+      enabled: process.env.UNISHARE_AI_ENABLED,
+      apiKey: process.env.GEMINI_API_KEY,
+      allowlist: process.env.UNISHARE_AI_TEST_UIDS,
+      accessMode: process.env.UNISHARE_AI_ACCESS_MODE
+    };
+    if (provider === null) {
+      const accessError = productionAiAccessError(uid, config);
+      if (accessError) {
+        aiError(res, 503, accessError, "AI is unavailable for this account");
+        return;
+      }
     }
+    const activeProvider = provider ?? createGeminiProvider(config.apiKey!);
 
     const identity = {
       uid, docId, question, clientMessageId
@@ -160,8 +164,8 @@ export function createAiChatRouter(
           return;
 
         case "STALE_REVIEW":
-          aiError(res, 503, "SERVICE_UNAVAILABLE",
-            "AI request needs reconciliation");
+          aiError(res, 503, "AI_RESULT_UNKNOWN",
+            "AI request outcome is not confirmed");
           return;
 
         case "COMPLETED": {
@@ -262,10 +266,14 @@ export function createAiChatRouter(
           return;
         }
 
-        sendApiError(
-          res, 503, "SERVICE_UNAVAILABLE",
-          "Document content unavailable"
-        );
+        const pdfCode = error instanceof AiPdfSourceError || error instanceof PdfTextError ? error.code : null;
+        if (pdfCode === "PDF_TOO_LARGE") {
+          aiError(res, 422, pdfCode, "PDF exceeds AI size limit");
+        } else if (pdfCode === "INVALID_PDF" || pdfCode === "PDF_VERSION_MISMATCH") {
+          aiError(res, 422, "INVALID_PDF", "PDF could not be read");
+        } else {
+          aiError(res, 503, "PDF_SOURCE_UNAVAILABLE", "Document content unavailable");
+        }
         return;
       }
 
@@ -274,19 +282,18 @@ export function createAiChatRouter(
       try {
         reply = await activeProvider.ask({ docId, question, pages });
       } catch (error) {
-        if (error instanceof AiProviderNotSentError) {
-          // Safe to refund only when definitely not sent.
-          await finishAiRequest(
-            identity, dayUtc, "NOT_SENT"
-          );
+        const code = error instanceof AiProviderError ? error.code : "GEMINI_UNAVAILABLE";
+        if (error instanceof AiProviderNotSentError || code === "GEMINI_RATE_LIMIT") {
+          // Gemini rejects generation when it returns HTTP 429.
+          await finishAiRequest(identity, dayUtc, code === "GEMINI_RATE_LIMIT" ? "REJECTED" : "NOT_SENT");
         }
 
-        // Unknown provider outcome stays RESERVED: fail closed.
-        aiError(res, 503, "SERVICE_UNAVAILABLE",
-          "AI provider unavailable");
+        // An uncertain request keeps its reservation and cannot generate twice.
+        aiError(res, 503, code, "AI provider unavailable");
         return;
       }
 
+      const sourcePages = new Set(pages.map(page => page.page));
       if (
         typeof reply.answer !== "string" ||
         reply.answer.length === 0 ||
@@ -299,7 +306,8 @@ export function createAiChatRouter(
           citation =>
             Number.isSafeInteger(citation.page) &&
             citation.page >= 1 &&
-            citation.page <= 10000
+            citation.page <= 10000 &&
+            sourcePages.has(citation.page)
         ) ||
         !Number.isSafeInteger(reply.actualTokens) ||
         reply.actualTokens < 0 ||

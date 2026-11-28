@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import vn.unishare.domain.repository.AuthRepository
 import vn.unishare.domain.repository.AuthSession
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.util.UUID
 import java.util.concurrent.TimeoutException
 
@@ -165,11 +166,7 @@ class AiChatViewModel(
 
     fun retryLastFailedMessage() {
         val state = _uiState.value
-        val targetClientId = (state.errorState as? AiChatErrorState.Transient)?.failedClientMessageId
-            ?: state.messages.lastOrNull {
-                it.role == AiChatRole.USER && it.deliveryState == AiMessageDeliveryState.FAILED
-            }?.clientMessageId
-            ?: return
+        val targetClientId = (state.errorState as? AiChatErrorState.Transient)?.failedClientMessageId ?: return
 
         val failedMsg = state.messages.firstOrNull { it.clientMessageId == targetClientId } ?: return
         if (!state.canCompose || state.isSending || state.docId.isBlank()) return
@@ -313,7 +310,12 @@ class AiChatViewModel(
                 error.message ?: "Bạn đã hết lượt hỏi AI trong phiên."
             )
 
-            is TimeoutException -> AiChatErrorState.Transient(
+            is AiChatFailure.ServiceUnavailable -> AiChatErrorState.Transient(
+                message = error.message.orEmpty(),
+                failedClientMessageId = clientMessageId.takeIf { error.retryable }
+            )
+
+            is TimeoutException, is SocketTimeoutException -> AiChatErrorState.Transient(
                 message = "Quá thời gian chờ phản hồi từ AI. Bạn có thể bấm Thử lại.",
                 failedClientMessageId = clientMessageId
             )
@@ -324,7 +326,7 @@ class AiChatViewModel(
             )
 
             else -> AiChatErrorState.Transient(
-                message = error.message ?: "Trợ lý AI tạm thời gián đoạn. Vui lòng thử lại.",
+                message = "Chưa thể xử lý câu hỏi. Vui lòng thử lại sau.",
                 failedClientMessageId = clientMessageId
             )
         }

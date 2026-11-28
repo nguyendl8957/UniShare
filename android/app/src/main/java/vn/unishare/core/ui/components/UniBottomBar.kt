@@ -2,7 +2,6 @@ package vn.unishare.core.ui.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -105,9 +104,7 @@ fun UniBottomBar(
     Surface(
         color = Color.White,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = modifier
-            .height(80.dp)
-            .semantics {
+        modifier = modifier.semantics {
                 contentDescription = "Thanh điều hướng chính (${mode.name})"
             }
     ) {
@@ -123,7 +120,11 @@ fun UniBottomBar(
                         Icon(
                             painter = painterResource(id = iconRes),
                             contentDescription = "Biểu tượng ${item.title}",
-                            tint = Color.Unspecified, // Giữ nguyên màu gốc của Vector Asset từ Figma
+                            tint = if (isSelected && mode == UniAppMode.SELLER && item.route == "explore") {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Unspecified
+                            },
                             modifier = Modifier.size(24.dp)
                         )
                     },

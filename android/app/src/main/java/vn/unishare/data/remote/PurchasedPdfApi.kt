@@ -140,11 +140,7 @@ class PurchasedPdfApi(
 
                 if (
                     result.size.toLong() != declaredSize ||
-                    result.size < 5 ||
-                    !result.copyOfRange(0, 5)
-                        .contentEquals(
-                            "%PDF-".toByteArray(Charsets.US_ASCII)
-                        )
+                    !hasPdfHeader(result)
                 ) {
                     throw IOException(
                         "Invalid PDF response"

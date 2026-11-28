@@ -13,6 +13,7 @@ export const api = onRequest(
         invoker: "public",
         minInstances: 0,
         maxInstances: 2,
+        memory: "512MiB",
         timeoutSeconds: 60,
         serviceAccount: "unishare-backend@unishare-db44a.iam.gserviceaccount.com",
         secrets: ["SEPAY_WEBHOOK_SECRET", "GEMINI_API_KEY"]

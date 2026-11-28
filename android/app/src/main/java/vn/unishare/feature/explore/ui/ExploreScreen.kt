@@ -56,6 +56,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -86,11 +88,29 @@ import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import kotlin.math.roundToInt
 
-private val ExplorePrimaryGreen = Color(0xFF2E7D32)
-private val ExploreActionGreen = Color(0xFF17823B)
-private val ExploreChipTextGreen = Color(0xFF116B31)
-private val ExploreChipBgLight = Color(0xFFE5F2E9)
-private val ExploreFilterChipBg = Color(0xFFF1F8F2)
+private data class ExploreColors(
+    val primary: Color,
+    val action: Color,
+    val chipText: Color,
+    val chipBackground: Color,
+    val filterBackground: Color,
+    val sliderTrack: Color,
+    val emptyIllustration: Int
+)
+
+private val BuyerExploreColors = ExploreColors(
+    Color(0xFF2E7D32), Color(0xFF17823B), Color(0xFF116B31), Color(0xFFE5F2E9),
+    Color(0xFFF1F8F2), Color(0xFFDCE8DF), R.drawable.ic_search_empty_illustration
+)
+
+private val SellerExploreColors = ExploreColors(
+    Color(0xFF0863CE), Color(0xFF005BDA), Color(0xFF10244E), Color(0xFFE6EEFC),
+    Color(0xFFF3F7FF), Color(0xFFDCE8F8), R.drawable.ic_seller_empty_illustration
+)
+
+private val LocalExploreColors = staticCompositionLocalOf { BuyerExploreColors }
+private val exploreColors: ExploreColors
+    @Composable get() = LocalExploreColors.current
 private val ExploreHomeBackground = Color(0xFFF7F8FA)
 private val ExploreSearchBackground = Color(0xFFFAFBFC)
 private val ExploreTitleInk = Color(0xFF172033)
@@ -100,7 +120,6 @@ private val ExploreMutedSearchInk = Color(0xFF7C8595)
 private val ExploreBorderColor = Color(0xFFE6E9EF)
 private val ExploreInputBorderColor = Color(0xFFCAC4D0)
 private val ExploreBadgeBlue = Color(0xFF287CF7)
-private val ExploreSliderInactive = Color(0xFFDCE8DF)
 
 // Màn hình khám phá: Trang chủ, Tìm kiếm, Bộ lọc và Sắp xếp
 @Composable
@@ -108,20 +127,24 @@ fun ExploreScreen(
     viewModel: ExploreViewModel,
     onDocumentClick: (String) -> Unit,
     onBottomNavSelected: (String) -> Unit = {},
-    onNotificationsClick: () -> Unit = {},
+    onNotificationsClick: (() -> Unit)? = null,
     onProfileIconClick: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    appMode: UniAppMode = UniAppMode.BUYER,
+    hasExtendedCatalogData: Boolean = true,
+    onExitSearch: (() -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
+    val exitSearch = onExitSearch ?: viewModel::backToHome
     BackHandler(enabled = uiState.viewMode == ExploreViewMode.SEARCH) {
-        viewModel.backToHome()
+        exitSearch()
     }
 
     ExploreScreenContent(
         uiState = uiState,
         onOpenSearchMode = viewModel::openSearchMode,
-        onBackToHome = viewModel::backToHome,
+        onBackToHome = exitSearch,
         onQueryChange = viewModel::onQueryChange,
         onClearQuery = viewModel::clearQuery,
         onTopicChipClick = viewModel::onTopicChipClick,
@@ -146,12 +169,14 @@ fun ExploreScreen(
         onProfileIconClick = onProfileIconClick,
         onBottomNavSelected = { route ->
             when (route) {
-                "home" -> viewModel.backToHome()
+                "home" -> if (appMode == UniAppMode.BUYER) viewModel.backToHome()
                 "explore" -> viewModel.openSearchMode(showAllResultsImmediately = false)
             }
             onBottomNavSelected(route)
         },
-        modifier = modifier
+        modifier = modifier,
+        appMode = appMode,
+        hasExtendedCatalogData = hasExtendedCatalogData
     )
 }
 
@@ -181,12 +206,16 @@ fun ExploreScreenContent(
     onSelectSortOption: (ExploreSortOption) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
-    onNotificationsClick: () -> Unit,
+    onNotificationsClick: (() -> Unit)?,
     onProfileIconClick: () -> Unit,
     onBottomNavSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    appMode: UniAppMode = UniAppMode.BUYER,
+    hasExtendedCatalogData: Boolean = true
+) = CompositionLocalProvider(
+    LocalExploreColors provides if (appMode == UniAppMode.SELLER) SellerExploreColors else BuyerExploreColors
 ) {
-    val selectedBottomRoute = if (uiState.viewMode == ExploreViewMode.HOME) "home" else "explore"
+    val selectedBottomRoute = if (uiState.viewMode == ExploreViewMode.HOME && appMode == UniAppMode.BUYER) "home" else "explore"
     val containerBg = if (uiState.viewMode == ExploreViewMode.HOME) ExploreHomeBackground else ExploreSearchBackground
 
     Scaffold(
@@ -219,8 +248,7 @@ fun ExploreScreenContent(
             UniBottomBar(
                 selectedRoute = selectedBottomRoute,
                 onItemSelected = onBottomNavSelected,
-                mode = UniAppMode.BUYER,
-                modifier = Modifier.navigationBarsPadding()
+                mode = appMode
             )
         }
     ) { innerPadding ->
@@ -270,7 +298,8 @@ fun ExploreScreenContent(
                 onSelectMinRating = onUpdateDraftMinRating,
                 onSelectDocType = onUpdateDraftDocType,
                 onResetClick = onResetDraftFilter,
-                onApplyClick = onApplyDraftFilter
+                onApplyClick = onApplyDraftFilter,
+                hasExtendedCatalogData = hasExtendedCatalogData
             )
         }
     }
@@ -287,7 +316,8 @@ fun ExploreScreenContent(
             SortBottomSheetContent(
                 selectedOption = uiState.sortOption,
                 onSelectOption = onSelectSortOption,
-                onCloseClick = onDismissSortSheet
+                onCloseClick = onDismissSortSheet,
+                hasRatings = hasExtendedCatalogData
             )
         }
     }
@@ -299,7 +329,7 @@ fun ExploreScreenContent(
 private fun HomeTopHeader(
     selectedCategory: ExploreCategory,
     onSearchIconClick: () -> Unit,
-    onNotificationsClick: () -> Unit,
+    onNotificationsClick: (() -> Unit)?,
     onProfileIconClick: () -> Unit,
     onSelectCategory: (ExploreCategory) -> Unit
 ) {
@@ -342,7 +372,7 @@ private fun HomeTopHeader(
                             )
                         }
 
-                        IconButton(
+                        if (onNotificationsClick != null) IconButton(
                             onClick = onNotificationsClick,
                             modifier = Modifier.size(44.dp)
                         ) {
@@ -563,14 +593,14 @@ private fun SectionHeaderRow(
         ) {
             Text(
                 text = "Xem tất cả",
-                color = ExplorePrimaryGreen,
+                color = exploreColors.primary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
             )
             Icon(
                 painter = painterResource(id = R.drawable.ic_chevron_right),
                 contentDescription = null,
-                tint = ExplorePrimaryGreen,
+                tint = exploreColors.primary,
                 modifier = Modifier.size(14.dp)
             )
         }
@@ -636,7 +666,7 @@ private fun RecommendedDocumentCard(
 
                 Text(
                     text = formatPriceVnd(item.priceVnd),
-                    color = ExplorePrimaryGreen,
+                    color = exploreColors.primary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -729,7 +759,7 @@ private fun LatestDocumentRowCard(
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = formatPriceVnd(item.priceVnd),
-                            color = ExplorePrimaryGreen,
+                            color = exploreColors.primary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -770,7 +800,7 @@ private fun HomeEmptyCard(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
             Image(
-                painter = painterResource(id = R.drawable.ic_search_empty_illustration),
+                painter = painterResource(id = exploreColors.emptyIllustration),
                 contentDescription = null,
                 modifier = Modifier
                     .width(86.dp)
@@ -796,7 +826,7 @@ private fun HomeEmptyCard(
                         onClick = onRefreshClick,
                         shape = RoundedCornerShape(24.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = ExplorePrimaryGreen,
+                            containerColor = exploreColors.primary,
                             contentColor = Color.White
                         ),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
@@ -815,11 +845,11 @@ private fun HomeEmptyCard(
                         OutlinedButton(
                             onClick = onResetCategory,
                             shape = RoundedCornerShape(24.dp),
-                            border = BorderStroke(1.dp, ExplorePrimaryGreen),
+                            border = BorderStroke(1.dp, exploreColors.primary),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier.heightIn(min = 36.dp)
                         ) {
-                            Text(text = "Tất cả", color = ExplorePrimaryGreen, fontSize = 11.sp)
+                            Text(text = "Tất cả", color = exploreColors.primary, fontSize = 11.sp)
                         }
                     }
                 }
@@ -952,7 +982,7 @@ private fun SearchTopHeader(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { onQueryChange(query) }),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = ExplorePrimaryGreen,
+                        focusedBorderColor = exploreColors.primary,
                         unfocusedBorderColor = ExploreInputBorderColor,
                         focusedContainerColor = Color.White,
                         unfocusedContainerColor = Color.White,
@@ -972,10 +1002,10 @@ private fun SearchTopHeader(
                 OutlinedButton(
                     onClick = onOpenFilterSheet,
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, ExplorePrimaryGreen),
+                    border = BorderStroke(1.dp, exploreColors.primary),
                     colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (activeCount > 0) ExploreFilterChipBg else Color.White,
-                        contentColor = ExplorePrimaryGreen
+                        containerColor = if (activeCount > 0) exploreColors.filterBackground else Color.White,
+                        contentColor = exploreColors.primary
                     ),
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier
@@ -985,7 +1015,7 @@ private fun SearchTopHeader(
                     Icon(
                         painter = painterResource(id = R.drawable.ic_list_filter),
                         contentDescription = null,
-                        tint = ExplorePrimaryGreen,
+                        tint = exploreColors.primary,
                         modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(5.dp))
@@ -1037,7 +1067,7 @@ private fun SearchExploreBody(
                 ) {
                     ExploreFilter.SUGGESTED_TOPICS.forEach { topic ->
                         Surface(
-                            color = ExploreFilterChipBg,
+                            color = exploreColors.filterBackground,
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(14.dp))
@@ -1052,12 +1082,12 @@ private fun SearchExploreBody(
                                 Icon(
                                     painter = painterResource(id = R.drawable.nav_buyer_search_unselected_home),
                                     contentDescription = null,
-                                    tint = ExploreChipTextGreen,
+                                    tint = exploreColors.chipText,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Text(
                                     text = topic,
-                                    color = ExploreChipTextGreen,
+                                    color = exploreColors.chipText,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -1084,7 +1114,7 @@ private fun SearchExploreBody(
                         Icon(
                             painter = painterResource(id = R.drawable.ic_list_filter),
                             contentDescription = null,
-                            tint = ExploreActionGreen,
+                            tint = exploreColors.action,
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
@@ -1097,7 +1127,7 @@ private fun SearchExploreBody(
                     Icon(
                         painter = painterResource(id = R.drawable.ic_chevron_right),
                         contentDescription = null,
-                        tint = ExploreActionGreen,
+                        tint = exploreColors.action,
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -1111,7 +1141,7 @@ private fun SearchExploreBody(
                         .padding(horizontal = 28.dp, vertical = 32.dp)
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.ic_search_empty_illustration),
+                        painter = painterResource(id = exploreColors.emptyIllustration),
                         contentDescription = null,
                         modifier = Modifier
                             .width(136.dp)
@@ -1157,7 +1187,7 @@ private fun SearchExploreBody(
                     .testTag("explore_no_results")
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.ic_search_empty_illustration),
+                    painter = painterResource(id = exploreColors.emptyIllustration),
                     contentDescription = null,
                     modifier = Modifier
                         .width(144.dp)
@@ -1221,7 +1251,7 @@ private fun SearchExploreBody(
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_list_filter),
                                     contentDescription = null,
-                                    tint = ExplorePrimaryGreen,
+                                    tint = exploreColors.primary,
                                     modifier = Modifier.size(13.dp)
                                 )
                                 Text(
@@ -1241,7 +1271,7 @@ private fun SearchExploreBody(
                             ) {
                                 Text(
                                     text = "Đặt lại",
-                                    color = ExploreActionGreen,
+                                    color = exploreColors.action,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -1339,7 +1369,7 @@ private fun SearchResultDocumentCard(
 
                 Text(
                     text = formatPriceVnd(item.priceVnd),
-                    color = ExplorePrimaryGreen,
+                    color = exploreColors.primary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1372,7 +1402,8 @@ private fun AdvancedFilterSheetContent(
     onSelectMinRating: (Double?) -> Unit,
     onSelectDocType: (ExploreDocType) -> Unit,
     onResetClick: () -> Unit,
-    onApplyClick: () -> Unit
+    onApplyClick: () -> Unit,
+    hasExtendedCatalogData: Boolean
 ) {
     var schoolMenuExpanded by remember { mutableStateOf(false) }
 
@@ -1397,7 +1428,7 @@ private fun AdvancedFilterSheetContent(
                 Icon(
                     painter = painterResource(id = R.drawable.ic_list_filter),
                     contentDescription = null,
-                    tint = ExploreActionGreen,
+                    tint = exploreColors.action,
                     modifier = Modifier.size(20.dp)
                 )
                 Text(
@@ -1420,12 +1451,12 @@ private fun AdvancedFilterSheetContent(
                 Icon(
                     painter = painterResource(id = R.drawable.ic_history),
                     contentDescription = null,
-                    tint = ExploreActionGreen,
+                    tint = exploreColors.action,
                     modifier = Modifier.size(16.dp)
                 )
                 Text(
                     text = "Đặt lại",
-                    color = ExploreActionGreen,
+                    color = exploreColors.action,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -1459,7 +1490,7 @@ private fun AdvancedFilterSheetContent(
             }
 
             // 2. Trường
-            FilterSectionBlock(title = "Trường") {
+            if (hasExtendedCatalogData) FilterSectionBlock(title = "Trường") {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Surface(
                         color = Color.White,
@@ -1544,9 +1575,9 @@ private fun AdvancedFilterSheetContent(
                 }
 
                 val sliderColors = SliderDefaults.colors(
-                    thumbColor = ExploreActionGreen,
-                    activeTrackColor = ExploreActionGreen,
-                    inactiveTrackColor = ExploreSliderInactive
+                    thumbColor = exploreColors.action,
+                    activeTrackColor = exploreColors.action,
+                    inactiveTrackColor = exploreColors.sliderTrack
                 )
 
                 RangeSlider(
@@ -1563,7 +1594,7 @@ private fun AdvancedFilterSheetContent(
                     startThumb = {
                         Surface(
                             shape = CircleShape,
-                            color = ExploreActionGreen,
+                            color = exploreColors.action,
                             shadowElevation = 2.dp,
                             modifier = Modifier.size(20.dp)
                         ) {}
@@ -1571,7 +1602,7 @@ private fun AdvancedFilterSheetContent(
                     endThumb = {
                         Surface(
                             shape = CircleShape,
-                            color = ExploreActionGreen,
+                            color = exploreColors.action,
                             shadowElevation = 2.dp,
                             modifier = Modifier.size(20.dp)
                         ) {}
@@ -1590,7 +1621,7 @@ private fun AdvancedFilterSheetContent(
             }
 
             // 4. Điểm số người bán
-            FilterSectionBlock(title = "Điểm số người bán") {
+            if (hasExtendedCatalogData) FilterSectionBlock(title = "Điểm số người bán") {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1609,7 +1640,7 @@ private fun AdvancedFilterSheetContent(
             }
 
             // 5. Loại tài liệu
-            FilterSectionBlock(title = "Loại tài liệu") {
+            if (hasExtendedCatalogData) FilterSectionBlock(title = "Loại tài liệu") {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1635,7 +1666,7 @@ private fun AdvancedFilterSheetContent(
                 onClick = onApplyClick,
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = ExploreActionGreen,
+                    containerColor = exploreColors.action,
                     contentColor = Color.White
                 ),
                 modifier = Modifier
@@ -1680,7 +1711,7 @@ private fun FilterOptionChip(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        color = if (selected) ExploreActionGreen else ExploreFilterChipBg,
+        color = if (selected) exploreColors.action else exploreColors.filterBackground,
         shape = RoundedCornerShape(14.dp),
         modifier = modifier
             .heightIn(min = 32.dp)
@@ -1693,7 +1724,7 @@ private fun FilterOptionChip(
         ) {
             Text(
                 text = label,
-                color = if (selected) Color.White else ExploreChipTextGreen,
+                color = if (selected) Color.White else exploreColors.chipText,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -1707,7 +1738,8 @@ private fun FilterOptionChip(
 private fun SortBottomSheetContent(
     selectedOption: ExploreSortOption,
     onSelectOption: (ExploreSortOption) -> Unit,
-    onCloseClick: () -> Unit
+    onCloseClick: () -> Unit,
+    hasRatings: Boolean
 ) {
     Column(
         modifier = Modifier
@@ -1726,7 +1758,7 @@ private fun SortBottomSheetContent(
             Icon(
                 painter = painterResource(id = R.drawable.ic_list_filter),
                 contentDescription = null,
-                tint = ExplorePrimaryGreen,
+                tint = exploreColors.primary,
                 modifier = Modifier.size(20.dp)
             )
             Text(
@@ -1751,7 +1783,7 @@ private fun SortBottomSheetContent(
             }
         }
 
-        ExploreSortOption.entries.forEach { option ->
+        ExploreSortOption.entries.filter { hasRatings || it != ExploreSortOption.HIGHEST_RATED }.forEach { option ->
             val isSelected = option == selectedOption
             val iconRes = when (option) {
                 ExploreSortOption.PRICE_ASC -> R.drawable.ic_switch_role
@@ -1777,7 +1809,7 @@ private fun SortBottomSheetContent(
                 Icon(
                     painter = painterResource(id = iconRes),
                     contentDescription = null,
-                    tint = if (isSelected) ExplorePrimaryGreen else ExploreMutedSearchInk,
+                    tint = if (isSelected) exploreColors.primary else ExploreMutedSearchInk,
                     modifier = Modifier.size(20.dp)
                 )
                 Column(
@@ -1800,7 +1832,7 @@ private fun SortBottomSheetContent(
                     selected = isSelected,
                     onClick = null,
                     colors = RadioButtonDefaults.colors(
-                        selectedColor = ExplorePrimaryGreen,
+                        selectedColor = exploreColors.primary,
                         unselectedColor = Color(0xFF94A3B8)
                     )
                 )
@@ -1828,7 +1860,7 @@ private fun CategoryChipRow(
         ) { category ->
             val isSelected = category == selectedCategory
             Surface(
-                color = if (isSelected) ExplorePrimaryGreen else ExploreChipBgLight,
+                color = if (isSelected) exploreColors.primary else exploreColors.chipBackground,
                 shape = RoundedCornerShape(24.dp),
                 modifier = Modifier
                     .heightIn(min = 32.dp)
@@ -1842,7 +1874,7 @@ private fun CategoryChipRow(
                 ) {
                     Text(
                         text = category.label,
-                        color = if (isSelected) Color.White else ExplorePrimaryGreen,
+                        color = if (isSelected) Color.White else exploreColors.primary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -1858,7 +1890,7 @@ private fun CategoryBadgeOverlay(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        color = ExplorePrimaryGreen,
+        color = exploreColors.primary,
         shape = RoundedCornerShape(5.dp),
         modifier = modifier
     ) {
@@ -1920,6 +1952,7 @@ private fun RatingCompactRow(
     rating: Double,
     reviewCount: Int
 ) {
+    if (reviewCount <= 0) return
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1931,7 +1964,7 @@ private fun RatingCompactRow(
             modifier = Modifier.size(12.dp)
         )
         Text(
-            text = if (reviewCount == 0) "Chưa có đánh giá" else "$rating ($reviewCount)",
+            text = "$rating ($reviewCount)",
             color = ExploreSearchTitleInk,
             fontSize = 10.sp
         )
@@ -1953,7 +1986,7 @@ private fun PaginationFooter(
         when {
             isLoadingMore -> {
                 CircularProgressIndicator(
-                    color = ExplorePrimaryGreen,
+                    color = exploreColors.primary,
                     strokeWidth = 2.5.dp,
                     modifier = Modifier.size(26.dp)
                 )
@@ -1973,12 +2006,12 @@ private fun PaginationFooter(
                     OutlinedButton(
                         onClick = onLoadMore,
                         shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, ExplorePrimaryGreen),
+                        border = BorderStroke(1.dp, exploreColors.primary),
                         modifier = Modifier.testTag("btn_retry_load_more")
                     ) {
                         Text(
                             text = "Thử tải thêm lại",
-                            color = ExplorePrimaryGreen,
+                            color = exploreColors.primary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -1990,14 +2023,14 @@ private fun PaginationFooter(
                 OutlinedButton(
                     onClick = onLoadMore,
                     shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, ExplorePrimaryGreen),
+                    border = BorderStroke(1.dp, exploreColors.primary),
                     modifier = Modifier
                         .heightIn(min = 44.dp)
                         .testTag("btn_load_more")
                 ) {
                     Text(
                         text = "Xem thêm tài liệu",
-                        color = ExplorePrimaryGreen,
+                        color = exploreColors.primary,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold
                     )

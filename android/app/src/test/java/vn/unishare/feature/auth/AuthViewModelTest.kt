@@ -35,6 +35,7 @@ private class ControllableFakeAuthRepository(
     var signInCallCount = 0
     var signUpCallCount = 0
     var resetCallCount = 0
+    var googleCallCount = 0
 
     var nextResult: Result<Unit> = Result.success(Unit)
     var suspendGate: CompletableDeferred<Unit>? = null
@@ -61,6 +62,12 @@ private class ControllableFakeAuthRepository(
         return nextResult
     }
 
+    override suspend fun signInWithGoogle(idToken: String): Result<Unit> {
+        googleCallCount++
+        if (nextResult.isSuccess) _session.value = AuthSession.SignedIn("uid-google-test")
+        return nextResult
+    }
+
     override suspend fun sendPasswordReset(email: String): Result<Unit> {
         resetCallCount++
         suspendGate?.await()
@@ -74,6 +81,30 @@ private class ControllableFakeAuthRepository(
 }
 
 class AuthViewModelTest {
+
+    @Test
+    fun googleSignInReturnsToRequestedDocumentOnce() = runBlocking {
+        val repo = ControllableFakeAuthRepository()
+        val handle = SavedStateHandle(mapOf(RETURN_TARGET_KEY to "document/doc_101"))
+        val viewModel = AuthViewModel(repo, handle, Dispatchers.Unconfined)
+        viewModel.signInWithGoogle { "synthetic-id-token" }
+        assertEquals(AuthEvent.NavigateToTarget("document/doc_101"), viewModel.events.first())
+        assertEquals(1, repo.googleCallCount)
+        assertNull(handle.get<String>(RETURN_TARGET_KEY))
+        assertFalse(viewModel.uiState.value.isLoading)
+    }
+
+    @Test
+    fun reauthenticationWaitsForSuccessfulInputEvenWithAnExistingSession() = runBlocking {
+        val repo = ControllableFakeAuthRepository(AuthSession.SignedIn("uid-test-01"))
+        val target = "checkout:doc_101"
+        val handle = SavedStateHandle(mapOf(RETURN_TARGET_KEY to target))
+        val viewModel = AuthViewModel(repo, handle, Dispatchers.Unconfined, requireFreshSignIn = true)
+        assertFalse(viewModel.uiState.value.isReturnTargetConsumed)
+        viewModel.submit("test@example.com", "demo-password")
+        assertEquals(AuthEvent.NavigateToTarget(target), viewModel.events.first())
+        assertTrue(viewModel.uiState.value.isReturnTargetConsumed)
+    }
 
     @Test
     fun invalidEmailOrShortPassword_doesNotCallRepository() = runBlocking {

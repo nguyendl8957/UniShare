@@ -2,6 +2,7 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 
 import { authorizePdfRead } from "../documents/entitlement";
+import { hasPdfHeader } from "../documents/pdfValidation";
 import { extractPdfPages, type PdfTextPage } from "./pdfText";
 
 const MAX_AI_PDF_BYTES = 2 * 1024 * 1024;
@@ -62,7 +63,7 @@ export async function loadAuthorizedPdfText(
 
     if (
       downloaded.length !== authorized.sizeBytes ||
-      downloaded.subarray(0, 5).toString("ascii") !== "%PDF-"
+      !hasPdfHeader(downloaded)
     ) {
       throw new AiPdfSourceError("PDF_VERSION_MISMATCH");
     }

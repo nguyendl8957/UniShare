@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,7 +49,8 @@ class CheckoutViewModel(
     private val orderRepository: OrderRepository,
     private val authRepository: AuthRepository? = null,
     private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
-    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
+    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val resumeOrderId: String? = null
 ) : ViewModel() {
 
     // 1. Quản lý khóa Idempotency bất biến: lấy từ SavedStateHandle nếu đã có,
@@ -69,6 +71,8 @@ class CheckoutViewModel(
     // Quản lý các Coroutine Jobs bất đồng bộ
     private var pollingJob: Job? = null
     private var countdownJob: Job? = null
+    private var loadOrderJob: Job? = null
+    private var manualRefreshJob: Job? = null
 
     init {
         // Tự động kiểm tra phiên và nạp hoặc khôi phục đơn hàng khi ViewModel được tạo
@@ -80,8 +84,10 @@ class CheckoutViewModel(
      * Hỗ trợ khôi phục orderId từ SavedStateHandle nếu có.
      */
     fun loadOrCreateOrder() {
+        if (loadOrderJob?.isActive == true) return
         // Kiểm tra phiên đăng nhập (nếu có AuthRepository)
         val currentSession = authRepository?.session?.value
+        if (currentSession is AuthSession.Restoring) return
         if (currentSession is AuthSession.Guest) {
             _uiState.update {
                 it.copy(
@@ -103,8 +109,8 @@ class CheckoutViewModel(
             )
         }
 
-        viewModelScope.launch(mainDispatcher) {
-            val savedOrderId = savedStateHandle.get<String>(KEY_CHECKOUT_ORDER_ID)
+        loadOrderJob = viewModelScope.launch(mainDispatcher) {
+            val savedOrderId = savedStateHandle.get<String>(KEY_CHECKOUT_ORDER_ID) ?: resumeOrderId
 
             // Nếu đã có orderId lưu trước đó (sau khi xoay màn hình hoặc resume)
             val result = if (!savedOrderId.isNullOrBlank()) {
@@ -113,7 +119,7 @@ class CheckoutViewModel(
                     statusResult
                 } else {
                     val error = statusResult.exceptionOrNull()
-                    if (error is OrderApiException && error.httpStatus == 404) {
+                    if (resumeOrderId == null && error is OrderApiException && error.httpStatus == 404) {
                         orderRepository.createOrGetOrder(docId, idempotencyKey)
                     } else {
                         statusResult
@@ -123,6 +129,7 @@ class CheckoutViewModel(
                 orderRepository.createOrGetOrder(docId, idempotencyKey)
             }
 
+            ensureActive()
             result.fold(
                 onSuccess = { order ->
                     handleOrderSuccess(order)
@@ -183,6 +190,7 @@ class CheckoutViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        remainingSeconds = 0L,
                         businessError = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
                     )
                 }
@@ -249,17 +257,23 @@ class CheckoutViewModel(
 
                 // Nếu trong lúc chờ trạng thái đã thay đổi hoặc hết hạn thì thoát ngay
                 if (_uiState.value.status != OrderStatus.PENDING) break
+                if (manualRefreshJob?.isActive == true) continue
 
                 _uiState.update { it.copy(isPolling = true) }
 
                 val statusResult = orderRepository.getOrderStatus(orderId)
+                ensureActive()
                 statusResult.fold(
                     onSuccess = { updatedOrder ->
-                        val newStatus = updatedOrder.status
+                        val seconds = calculateRemainingSeconds(updatedOrder.expiresAtUtc)
+                        val newStatus = if (seconds == 0L && updatedOrder.status == OrderStatus.PENDING) {
+                            OrderStatus.EXPIRED
+                        } else updatedOrder.status
                         _uiState.update {
                             it.copy(
-                                order = updatedOrder,
+                                order = updatedOrder.copy(status = newStatus),
                                 status = newStatus,
+                                remainingSeconds = seconds,
                                 isPolling = false,
                                 networkError = null
                             )
@@ -275,8 +289,12 @@ class CheckoutViewModel(
                         }
                     },
                     onFailure = { pollError ->
-                        // Lỗi mạng trong lúc polling không làm sập màn hình, chỉ báo nhẹ và tiếp tục thử lại
-                        _uiState.update { it.copy(isPolling = false) }
+                        if (pollError is OrderApiException && pollError.httpStatus == 401) {
+                            handleOrderFailure(pollError)
+                            stopPolling()
+                            return@launch
+                        }
+                        _uiState.update { it.copy(isPolling = false, networkError = "Chưa cập nhật được trạng thái giao dịch.") }
                     }
                 )
 
@@ -311,7 +329,8 @@ class CheckoutViewModel(
                 // Nếu trạng thái đã chuyển sang PAID hoặc FAILED thì dừng đếm ngược
                 if (_uiState.value.status != OrderStatus.PENDING) break
 
-                seconds--
+                val expiresAt = _uiState.value.order?.expiresAtUtc.orEmpty()
+                seconds = calculateRemainingSeconds(expiresAt)
                 _uiState.update { it.copy(remainingSeconds = seconds) }
             }
 
@@ -337,7 +356,7 @@ class CheckoutViewModel(
             val nowMs = System.currentTimeMillis()
             val diffSec = (expiryMs - nowMs) / 1000L
             diffSec.coerceAtLeast(0L)
-        }.getOrDefault(900L) // Mặc định 15 phút (900 giây) nếu không parse được
+        }.getOrDefault(0L)
     }
 
     /**
@@ -355,23 +374,30 @@ class CheckoutViewModel(
      * Người dùng chủ động bấm nút "Kiểm tra trạng thái" / "Làm mới"
      */
     fun manualRefresh() {
+        if (_uiState.value.isPolling || manualRefreshJob?.isActive == true) return
         val currentOrder = _uiState.value.order
-        if (currentOrder != null && _uiState.value.status == OrderStatus.PENDING) {
-            viewModelScope.launch(mainDispatcher) {
+        if (currentOrder != null && _uiState.value.status in setOf(OrderStatus.PENDING, OrderStatus.EXPIRED)) {
+            manualRefreshJob = viewModelScope.launch(mainDispatcher) {
                 _uiState.update { it.copy(isPolling = true, networkError = null) }
                 val result = orderRepository.getOrderStatus(currentOrder.orderId)
+                ensureActive()
                 result.fold(
                     onSuccess = { updated ->
+                        val seconds = calculateRemainingSeconds(updated.expiresAtUtc)
+                        val status = if (seconds == 0L && updated.status == OrderStatus.PENDING) {
+                            OrderStatus.EXPIRED
+                        } else updated.status
                         _uiState.update {
                             it.copy(
-                                order = updated,
-                                status = updated.status,
+                                order = updated.copy(status = status),
+                                status = status,
+                                remainingSeconds = seconds,
                                 isPolling = false,
                                 networkError = null
                             )
                         }
-                        if (updated.status != OrderStatus.PENDING) {
-                            if (updated.status == OrderStatus.PAID) {
+                        if (status != OrderStatus.PENDING) {
+                            if (status == OrderStatus.PAID) {
                                 _eventChannel.send(CheckoutEvent.ShowSnackbar("Thanh toán thành công!"))
                             }
                             stopPolling()
@@ -383,7 +409,7 @@ class CheckoutViewModel(
                     }
                 )
             }
-        } else {
+        } else if (currentOrder == null) {
             loadOrCreateOrder()
         }
     }
@@ -393,6 +419,9 @@ class CheckoutViewModel(
      */
     fun onScreenResumed() {
         val currentOrder = _uiState.value.order
+        if (currentOrder != null && _uiState.value.status == OrderStatus.EXPIRED) {
+            manualRefresh()
+        }
         if (currentOrder != null && _uiState.value.status == OrderStatus.PENDING) {
             manualRefresh()
             if (pollingJob == null || pollingJob?.isActive != true) {
@@ -444,8 +473,7 @@ class CheckoutViewModel(
                 "Không tìm thấy tài liệu trên hệ thống."
             rawError.contains("INVALID_DOCUMENT_STATUS", ignoreCase = true) ->
                 "Tài liệu hiện chưa được xuất bản hoặc đã bị ẩn."
-            rawError.isNotBlank() -> rawError
-            else -> "Đã xảy ra lỗi khi tạo đơn hàng. Vui lòng thử lại."
+            else -> "Chưa thể xử lý yêu cầu thanh toán. Vui lòng thử lại."
         }
     }
 

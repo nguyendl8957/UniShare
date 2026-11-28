@@ -12,6 +12,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import vn.unishare.feature.payment.ui.VietQr
 import vn.unishare.domain.repository.AuthRepository
 import vn.unishare.domain.repository.AuthSession
 import vn.unishare.feature.payment.ui.BankTransferInfo
@@ -41,6 +42,20 @@ private class TestFakeAuthRepository(
 }
 
 class CheckoutViewModelTest {
+
+    @Test
+    fun vietinBankDetailsAndQrUseTheSameSepayContent() {
+        val info = BankTransferInfo(
+            bankName = "VietinBank", bankCode = "ICB", accountNumber = "0000000000",
+            accountHolder = "TEST ONLY", amountVnd = 12000, paymentCode = "UNI8A3F12"
+        )
+        assertEquals("SEVQR UNI8A3F12", VietQr.transferContent(info))
+        val qr = requireNotNull(VietQr.imageUrl(info))
+        assertTrue(qr.contains("&des=SEVQR%20UNI8A3F12&"))
+        assertTrue(qr.contains("&amount=12000&"))
+        assertEquals("UNI8A3F12", VietQr.transferContent(info.copy(bankName = "MB", bankCode = "MB")))
+        assertEquals(null, VietQr.imageUrl(info.copy(paymentCode = "invalid")))
+    }
 
     @Test
     fun init_createsOrder_successfully_withDefaultPendingState() = runBlocking {

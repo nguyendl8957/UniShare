@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { randomUUID } from "node:crypto";
 
 import { app } from "../src/app";
@@ -192,10 +192,28 @@ test("Phase 1 Seller metadata and lifecycle", async (t) => {
       assert.equal(catalog.get("title"), "Final Published Title");
       assert.equal(catalog.get("priceVnd"), 21000);
     });
-    await t.test("public Seller profile excludes private fields", async () => {
+    await t.test("Guest can load only the current public name for each Seller", async () => {
+      const nameOnly = (uid: string) => request(app).get(`/v1/seller/${uid}/public-profile?summary=name`);
+      const first = db.collection("users").doc(seller.uid);
+      const second = db.collection("users").doc("summary_other_seller");
+      await second.set({ sellerEnabled: true, displayName: "Lê Bảo Ngọc", email: "private@example.invalid" });
+      try {
+        assert.deepEqual((await nameOnly(seller.uid)).body, { sellerId: seller.uid, displayName: "Seller Test" });
+        assert.deepEqual((await nameOnly(second.id)).body, { sellerId: second.id, displayName: "Lê Bảo Ngọc" });
+        await first.update({ displayName: "Trần Nguyễn Ánh" });
+        assert.deepEqual((await nameOnly(seller.uid)).body, { sellerId: seller.uid, displayName: "Trần Nguyễn Ánh" });
+        await second.update({ displayName: "private@example.invalid" });
+        assert.deepEqual((await nameOnly(second.id)).body, { sellerId: second.id, displayName: "" });
+        await second.update({ displayName: FieldValue.delete() });
+        assert.deepEqual((await nameOnly(second.id)).body, { sellerId: second.id, displayName: "" });
+      } finally {
+        await first.update({ displayName: "Seller Test" });
+        await second.delete();
+      }
+    });
+    await t.test("Guest can view the public Seller profile without receiving private fields", async () => {
       const response = await request(app)
-        .get(`/v1/seller/${seller.uid}/public-profile`)
-        .set("Authorization", auth(other.token));
+        .get(`/v1/seller/${seller.uid}/public-profile`);
 
       assert.equal(response.status, 200, JSON.stringify(response.body));
       assert.equal(response.body.sellerId, seller.uid);

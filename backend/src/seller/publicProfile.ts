@@ -1,13 +1,11 @@
 import { Router } from "express";
 import { getFirestore } from "firebase-admin/firestore";
-import { requireAuth } from "../shared/firebaseAuth";
 import { sendApiError } from "../shared/httpErrors";
 
 export const sellerPublicProfileRouter = Router();
 
 sellerPublicProfileRouter.get(
   "/:sellerId/public-profile",
-  requireAuth,
   async (req, res) => {
     const sellerId = req.params.sellerId;
 
@@ -22,10 +20,11 @@ sellerPublicProfileRouter.get(
     try {
       const db = getFirestore();
 
-      const sellerSnapshot = await db
-        .collection("users")
-        .doc(sellerId)
-        .get();
+      const nameOnly = req.query.summary === "name";
+      const sellerRef = db.collection("users").doc(sellerId);
+      const sellerSnapshot = nameOnly
+        ? (await db.getAll(sellerRef, { fieldMask: ["sellerEnabled", "displayName"] }))[0]
+        : await sellerRef.get();
 
       const seller = sellerSnapshot.data();
 
@@ -34,6 +33,13 @@ sellerPublicProfileRouter.get(
         seller?.sellerEnabled !== true
       ) {
         sendApiError(res, 404, "NOT_FOUND", "Seller not found");
+        return;
+      }
+
+      if (nameOnly) {
+        const name = typeof seller.displayName === "string" ? seller.displayName.trim() : "";
+        const displayName = name && name !== sellerId && !name.includes("@") ? name : "";
+        res.status(200).json({ sellerId, displayName });
         return;
       }
 
