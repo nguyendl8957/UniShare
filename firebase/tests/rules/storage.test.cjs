@@ -4,13 +4,16 @@ const path = require("node:path");
 
 const {
   initializeTestEnvironment,
-  assertFails
+  assertFails,
+  assertSucceeds
 } = require("@firebase/rules-unit-testing");
 
 const {
   ref,
   getBytes,
-  uploadBytes
+  uploadBytes,
+  deleteObject,
+  listAll
 } = require("firebase/storage");
 
 const projectId = "demo-unishare";
@@ -89,4 +92,30 @@ test("Unpublished preview is not publicly readable", async () => {
   await assertFails(
     getBytes(ref(storage, "previews/doc1/v1/cover.jpg"))
   );
+});
+
+test("Avatar storage is private, immutable and restricted to bounded JPEG uploads", async () => {
+  const env = await setup();
+  const owner = env.authenticatedContext("avatarOwner").storage(bucket);
+  const other = env.authenticatedContext("anotherUser").storage(bucket);
+  const guest = env.unauthenticatedContext().storage(bucket);
+  const prefix = "avatars/avatarOwner";
+  const path = prefix + "/55baaf43-9d1c-4489-81d1-b49acad18ec5.jpg";
+  const otherPath = prefix + "/55baaf43-9d1c-4489-81d1-b49acad18ec6.jpg";
+  const data = new Uint8Array([255, 216, 255, 217]);
+  const jpeg = { contentType: "image/jpeg" };
+
+  await assertSucceeds(uploadBytes(ref(owner, path), data, jpeg));
+  await assertSucceeds(getBytes(ref(owner, path)));
+  await assertFails(getBytes(ref(guest, path)));
+  await assertFails(getBytes(ref(other, path)));
+  await assertFails(uploadBytes(ref(other, otherPath), data, jpeg));
+  await assertFails(uploadBytes(ref(guest, otherPath), data, jpeg));
+  await assertFails(uploadBytes(ref(owner, path), data, jpeg));
+  await assertFails(uploadBytes(ref(owner, otherPath), data, { contentType: "image/png" }));
+  await assertFails(uploadBytes(ref(owner, otherPath), new Uint8Array(1024 * 1024 + 1), jpeg));
+  await assertFails(uploadBytes(ref(owner, prefix + "/arbitrary.jpg"), data, jpeg));
+  await assertFails(listAll(ref(owner, prefix)));
+  await assertFails(deleteObject(ref(other, path)));
+  await assertSucceeds(deleteObject(ref(owner, path)));
 });

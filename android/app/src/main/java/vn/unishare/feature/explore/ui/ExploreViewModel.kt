@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,7 +17,8 @@ class ExploreViewModel(
     private val catalogRepository: ExploreCatalogRepository = FakeExploreCatalogRepository(),
     private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val pageSize: Int = DEFAULT_EXPLORE_PAGE_SIZE,
-    autoLoad: Boolean = true
+    autoLoad: Boolean = true,
+    private val typingDelayMillis: Long = 0
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ExploreUiState())
@@ -68,7 +70,7 @@ class ExploreViewModel(
             cancelPendingListRequests()
             _uiState.update { it.copy(listState = ExploreListState.Initial) }
         } else {
-            executeFreshQuery(loadRecommended = false)
+            executeFreshQuery(loadRecommended = false, delayMillis = typingDelayMillis)
         }
     }
 
@@ -188,7 +190,12 @@ class ExploreViewModel(
         executeFreshQuery(loadRecommended = false)
     }
 
+    fun invalidateCatalog() {
+        catalogRepository.invalidate()
+    }
+
     fun retryCurrentQuery() {
+        catalogRepository.invalidate()
         val isHome = _uiState.value.viewMode == ExploreViewMode.HOME
         executeFreshQuery(loadRecommended = isHome && _uiState.value.recommendedItems.isEmpty())
     }
@@ -374,13 +381,14 @@ class ExploreViewModel(
 
     // --- Nội bộ ---
 
-    private fun executeFreshQuery(loadRecommended: Boolean) {
+    private fun executeFreshQuery(loadRecommended: Boolean, delayMillis: Long = 0) {
         val requestId = ++querySequence
         cancelPendingListRequests()
 
         _uiState.update { it.copy(listState = ExploreListState.Loading) }
 
         activeQueryJob = viewModelScope.launch(mainDispatcher) {
+            if (delayMillis > 0) delay(delayMillis)
             if (loadRecommended) {
                 catalogRepository.fetchRecommended().onSuccess { recList ->
                     if (requestId == querySequence) {

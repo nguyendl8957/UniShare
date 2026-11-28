@@ -1,13 +1,11 @@
 import { Router } from "express";
 import { getFirestore } from "firebase-admin/firestore";
-import { requireAuth } from "../shared/firebaseAuth";
 import { sendApiError } from "../shared/httpErrors";
 
 export const sellerPublicProfileRouter = Router();
 
 sellerPublicProfileRouter.get(
   "/:sellerId/public-profile",
-  requireAuth,
   async (req, res) => {
     const sellerId = req.params.sellerId;
 

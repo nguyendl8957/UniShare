@@ -1,4 +1,4 @@
-﻿package vn.unishare.feature.seller
+package vn.unishare.feature.seller
 
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -96,7 +96,9 @@ class C04FirebaseIntegrationTest {
 
         val adapter = A04SellerRepositoryAdapter(
             a04 = a04,
-            metadataProvider = { viewModel.wizardState.value }
+            metadataProvider = { viewModel.wizardState.value },
+            auth = auth,
+            apiBaseUrl = "http://127.0.0.1:3000"
         )
 
         viewModel = UploadWizardViewModel(

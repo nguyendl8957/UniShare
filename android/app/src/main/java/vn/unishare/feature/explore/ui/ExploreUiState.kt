@@ -247,6 +247,7 @@ fun formatPriceVnd(amountVnd: Int): String {
 }
 
 interface ExploreCatalogRepository {
+    fun invalidate() = Unit
     suspend fun fetchRecommended(limit: Int = 6): Result<List<ExploreDocumentItem>>
     suspend fun queryCatalog(query: CatalogQuery): Result<CatalogPage>
     suspend fun getDocumentDetail(docId: String): Result<DocumentPublicDetail?>

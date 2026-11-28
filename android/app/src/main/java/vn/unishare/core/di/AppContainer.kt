@@ -1,5 +1,6 @@
 package vn.unishare.core.di
 
+import android.content.Context
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import vn.unishare.data.firebase.FirebaseAuthRepository
@@ -12,20 +13,22 @@ import vn.unishare.feature.payment.history.HttpBuyerTransactionsRepository
 import vn.unishare.feature.payment.ui.ApiOrderRepository
 import vn.unishare.feature.payment.ui.OrderRepository
 
-class AppContainer {
+class AppContainer(private val context: Context? = null) {
 
     val appName: String = "UniShare"
 
     val authRepository: AuthRepository by lazy {
         FirebaseAuthRepository(
-            firebaseAuth = FirebaseAuth.getInstance()
+            firebaseAuth = FirebaseAuth.getInstance(),
+            context = context
         )
     }
 
     val profileRepository: ProfileRepository by lazy {
         FirestoreProfileRepository(
             auth = FirebaseAuth.getInstance(),
-            firestore = FirebaseFirestore.getInstance()
+            firestore = FirebaseFirestore.getInstance(),
+            context = context
         )
     }
 

@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -34,7 +35,10 @@ fun RealPdfReaderScreen(
     onAskAiClick: (String) -> Unit = {},
     onRequireLoginClick: () -> Unit = {},
     onBottomNavSelected: (String) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialPage: Int = 1,
+    citationPage: Int = 0,
+    onCitationConsumed: () -> Unit = {}
 ) {
     var uid by remember(auth) {
         mutableStateOf(auth.currentUser?.uid)
@@ -46,8 +50,14 @@ fun RealPdfReaderScreen(
         )
     }
 
-    var currentPage by remember(docId, uid) {
-        mutableIntStateOf(1)
+    var currentPage by rememberSaveable(docId, uid) { mutableIntStateOf(initialPage) }
+    var pageCount by remember(docId, uid) { mutableIntStateOf(0) }
+
+    LaunchedEffect(citationPage, pageCount) {
+        if (citationPage > 0 && pageCount > 0) {
+            if (citationPage <= pageCount) currentPage = citationPage
+            onCitationConsumed()
+        }
     }
 
     var bitmap by remember(docId, uid) {
@@ -94,7 +104,8 @@ fun RealPdfReaderScreen(
                 throw SecurityException("Account changed")
             }
 
-            currentPage = 1
+            pageCount = info.pageCount
+            currentPage = currentPage.coerceIn(1, pageCount)
 
             snapshotFlow { currentPage }
                 .collectLatest { page ->

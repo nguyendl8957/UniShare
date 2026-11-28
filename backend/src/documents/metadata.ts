@@ -140,6 +140,7 @@ metadataRouter.patch("/:docId/metadata", requireAuth, async (req, res) => {
         tx.update(catalogRef, {
           title: metadata.title,
           titleNormalized: normalizeTitle(metadata.title),
+          description: metadata.description,
           subjectId: metadata.subject,
           categoryId: metadata.category,
           priceVnd: metadata.priceVnd

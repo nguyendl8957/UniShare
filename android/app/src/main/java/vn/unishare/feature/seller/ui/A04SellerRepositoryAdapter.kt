@@ -1,5 +1,7 @@
 package vn.unishare.feature.seller.ui
 
+import vn.unishare.data.remote.readAtMost
+
 import android.net.Uri
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
@@ -292,7 +294,7 @@ class A04SellerRepositoryAdapter(
                 }
 
                 val json = connection.inputStream.use {
-                    val bytes = it.readNBytes(262145)
+                    val bytes = it.readAtMost(262145)
                     require(bytes.size <= 262144) {
                         "Phản hồi Seller quá lớn."
                     }
@@ -490,7 +492,7 @@ class A04SellerRepositoryAdapter(
 
                     200 -> {
                         val bytes = connection.inputStream.use {
-                            it.readNBytes(8193)
+                            it.readAtMost(8193)
                         }
 
                         require(bytes.size <= 8192) {
@@ -644,7 +646,7 @@ class A04SellerRepositoryAdapter(
                 when (val status = connection.responseCode) {
                     200 -> {
                         val bytes = connection.inputStream.use {
-                            it.readNBytes(8193)
+                            it.readAtMost(8193)
                         }
 
                         require(bytes.size <= 8192) {
@@ -762,7 +764,7 @@ class A04SellerRepositoryAdapter(
                 when (val status = connection.responseCode) {
                     200 -> {
                         val bytes = connection.inputStream.use {
-                            it.readNBytes(8193)
+                            it.readAtMost(8193)
                         }
 
                         require(bytes.size <= 8192) {

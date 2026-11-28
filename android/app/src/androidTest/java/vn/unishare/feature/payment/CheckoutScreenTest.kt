@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -35,7 +36,7 @@ class CheckoutScreenTest {
         transferInfo = BankTransferInfo(
             bankName = "Ngân hàng Quân đội",
             bankCode = "MB",
-            accountNumber = "0345678999",
+            accountNumber = "0000000000",
             accountHolder = "UNISHARE SYSTEM",
             amountVnd = 50_000L,
             paymentCode = "UNI8A3F12"
@@ -74,15 +75,15 @@ class CheckoutScreenTest {
         composeTestRule.onNodeWithTag("btn_copy_account").assertIsDisplayed()
         composeTestRule.onNodeWithTag("btn_copy_amount").assertIsDisplayed()
         composeTestRule.onNodeWithTag("btn_copy_code").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("btn_refresh_status").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("btn_refresh_status").performScrollTo().assertIsDisplayed()
 
         // 2. Thao tác sao chép mã thanh toán
-        composeTestRule.onNodeWithTag("btn_copy_code").performClick()
+        composeTestRule.onNodeWithTag("btn_copy_code").performScrollTo().performClick()
         assertEquals("Nội dung chuyển khoản", copiedLabel)
         assertEquals("UNI8A3F12", copiedValue)
 
         // 3. Thao tác bấm nút "Tôi đã chuyển tiền / Kiểm tra ngay"
-        composeTestRule.onNodeWithTag("btn_refresh_status").performClick()
+        composeTestRule.onNodeWithTag("btn_refresh_status").performScrollTo().performClick()
         assertTrue(refreshClicked)
     }
 
@@ -141,7 +142,7 @@ class CheckoutScreenTest {
         // Bất biến: Ẩn thông tin ngân hàng khi EXPIRED
         composeTestRule.onNodeWithTag("section_bank_instructions").assertDoesNotExist()
 
-        // Hiển thị cảnh báo hết hạn và nút tạo đơn mới
+        // Kiểm tra lại trạng thái đơn đã hết hạn.
         composeTestRule.onNodeWithTag("section_expired").assertIsDisplayed()
         composeTestRule.onNodeWithText("Đơn hàng đã hết hạn").assertIsDisplayed()
         composeTestRule.onNodeWithTag("btn_retry_expired").assertIsDisplayed()

@@ -1,7 +1,9 @@
 package vn.unishare
 
 import android.os.Bundle
+import android.graphics.Color
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
@@ -18,16 +20,19 @@ import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.delay
 import vn.unishare.core.di.AppContainer
 import vn.unishare.core.navigation.AppNavHost
-import vn.unishare.ui.theme.UniShareTheme
+import vn.unishare.core.ui.theme.UniShareTheme
 
 class MainActivity : ComponentActivity() {
 
-    private val appContainer = AppContainer()
+    private val appContainer by lazy { AppContainer(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.WHITE),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.WHITE)
+        )
 
         setContent {
             UniShareTheme {

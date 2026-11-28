@@ -1,6 +1,11 @@
 package vn.unishare.feature.explore.ui
 
+import android.os.SystemClock
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
+import com.google.firebase.firestore.Source
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
 
@@ -8,8 +13,7 @@ import kotlinx.coroutines.tasks.await
  * C07: Public Firestore catalog adapter.
  *
  * Only reads backend-managed catalog documents.
- * Reads at most 20 documents because Firestore Rules require it.
- * Filtering and pagination apply ONLY to these fetched documents.
+ * Each query page respects the 20-document limit in Firestore Rules.
  *
  * No mock sellers, review ratings, or sales numbers.
  */
@@ -17,13 +21,34 @@ class FirestoreExploreCatalogRepository(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) : ExploreCatalogRepository {
 
-    private suspend fun fetchWindow(): List<ExploreDocumentItem> {
-        val snapshot = db.collection("catalog")
-            .limit(20)
-            .get()
-            .await()
+    private var catalogSnapshot = emptyList<ExploreDocumentItem>()
+    private var loadedAt: Long? = null
+    private var lastQuery: CatalogQuery? = null
+    private var lastQueryItems = emptyList<ExploreDocumentItem>()
 
-        return snapshot.documents.mapNotNull(::toItem)
+    override fun invalidate() {
+        loadedAt = null
+        lastQuery = null
+    }
+
+    private suspend fun fetchCatalog(): List<ExploreDocumentItem> {
+        if (loadedAt?.let { SystemClock.elapsedRealtime() - it < 30_000 } == true) {
+            return catalogSnapshot
+        }
+
+        val base = db.collection("catalog").orderBy(FieldPath.documentId()).limit(20)
+        val items = mutableListOf<ExploreDocumentItem>()
+        var cursor: DocumentSnapshot? = null
+        do {
+            val page = (cursor?.let { base.startAfter(it) } ?: base).get(Source.SERVER).await()
+            items.addAll(page.documents.mapNotNull(::toItem))
+            cursor = page.documents.lastOrNull().takeIf { page.size() == 20 }
+        } while (cursor != null)
+
+        currentCoroutineContext().ensureActive()
+        catalogSnapshot = items
+        loadedAt = SystemClock.elapsedRealtime()
+        return items
     }
 
     private fun readPreviewRefs(doc: DocumentSnapshot): List<PreviewImageRef> {
@@ -69,7 +94,7 @@ class FirestoreExploreCatalogRepository(
 
         val seller = SellerPublicSummary(
             sellerId = sellerId,
-            displayName = "Người bán chưa cập nhật",
+            displayName = "Người bán",
             badge = null,
             school = "Chưa cập nhật",
             rating = 0.0,
@@ -77,8 +102,7 @@ class FirestoreExploreCatalogRepository(
             soldCount = 0
         )
 
-        val titleNorm = doc.getString("titleNormalized")
-            ?: normalizeTitlePrefix(title)
+        val titleNorm = normalizeTitlePrefix(title)
 
         val published = doc.getTimestamp("publishedAt")
             ?.toDate()?.time ?: 0L
@@ -120,15 +144,25 @@ class FirestoreExploreCatalogRepository(
     override suspend fun queryCatalog(
         query: CatalogQuery
     ): Result<CatalogPage> = runCatching {
+        val key = query.copy(cursor = null)
+        val sorted = if (query.cursor != null && lastQuery == key) lastQueryItems else queryItems(query)
+        if (query.cursor == null) {
+            currentCoroutineContext().ensureActive()
+            lastQuery = key
+            lastQueryItems = sorted
+        }
+        val offset = query.cursor?.removePrefix("offset:")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val size = query.pageSize.coerceIn(1, 20)
+        val items = sorted.drop(offset).take(size)
+        val end = offset + items.size
+        CatalogPage(items, sorted.size, if (end < sorted.size) "offset:$end" else null)
+    }
+
+    private suspend fun queryItems(query: CatalogQuery): List<ExploreDocumentItem> {
         val prefix = normalizeTitlePrefix(query.normalizedPrefix)
-
-        val filtered = fetchWindow().filter { item ->
-            val words = item.titleNormalized
-                .split(Regex("[\\s(),-]+"))
-
-            val matchesSearch = prefix.isBlank() ||
-                item.titleNormalized.startsWith(prefix) ||
-                words.any { it.startsWith(prefix) }
+        val filtered = fetchCatalog().filter { item ->
+            val searchable = "${item.titleNormalized} ${normalizeTitlePrefix(item.subject.label)}"
+            val matchesSearch = prefix.isBlank() || searchable.contains(prefix)
 
             val filter = query.filter
 
@@ -140,14 +174,14 @@ class FirestoreExploreCatalogRepository(
                 (filter.school.isNullOrBlank() ||
                     filter.school == item.seller.school) &&
                 item.priceVnd >= filter.minPriceVnd &&
-                item.priceVnd <= filter.maxPriceVnd &&
+                (filter.maxPriceVnd == DEFAULT_MAX_PRICE_VND || item.priceVnd <= filter.maxPriceVnd) &&
                 (filter.minSellerRating == null ||
                     item.rating >= filter.minSellerRating) &&
                 (filter.docType == ExploreDocType.ALL ||
                     filter.docType == item.docType)
         }
 
-        val sorted = when (query.sortOption) {
+        return when (query.sortOption) {
             ExploreSortOption.PRICE_ASC ->
                 filtered.sortedWith(
                     compareBy<ExploreDocumentItem> { it.priceVnd }
@@ -168,24 +202,6 @@ class FirestoreExploreCatalogRepository(
                 )
         }
 
-        val offset = query.cursor
-            ?.removePrefix("offset:")
-            ?.toIntOrNull()
-            ?.coerceAtLeast(0) ?: 0
-
-        val size = query.pageSize.coerceIn(1, 20)
-        val page = sorted.drop(offset).take(size)
-        val end = offset + page.size
-
-        CatalogPage(
-            items = page,
-            totalCount = sorted.size,
-            nextCursor = if (end < sorted.size) {
-                "offset:$end"
-            } else {
-                null
-            }
-        )
     }
 
     override suspend fun getDocumentDetail(
@@ -197,7 +213,7 @@ class FirestoreExploreCatalogRepository(
 
         val snapshot = db.collection("catalog")
             .document(docId)
-            .get()
+            .get(Source.SERVER)
             .await()
 
         if (!snapshot.exists()) return@runCatching null
@@ -207,7 +223,8 @@ class FirestoreExploreCatalogRepository(
         DocumentPublicDetail(
             docId = item.docId,
             title = item.title,
-            description = "Chưa có mô tả công khai.",
+            description = snapshot.getString("description")?.takeIf { it.isNotBlank() }
+                ?: "Chưa có mô tả công khai.",
             category = item.category,
             subject = item.subject,
             docType = item.docType,

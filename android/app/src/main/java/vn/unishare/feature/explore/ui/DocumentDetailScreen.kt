@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.runtime.produceState
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
+import kotlinx.coroutines.tasks.await
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -112,7 +116,10 @@ fun DocumentDetailScreen(
     onSellerClick: (String) -> Unit,
     onBottomNavSelected: (String) -> Unit = {},
     onShareClick: (DocumentPublicDetail) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    buyerUid: String? = null,
+    onReadClick: (String) -> Unit = onBuyClick,
+    appMode: UniAppMode = UniAppMode.BUYER
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -136,6 +143,20 @@ fun DocumentDetailScreen(
     }
 
     val detailState = uiState.detailState
+    val ownsDocument = androidx.compose.runtime.key(buyerUid, docId) {
+        val owned by produceState(false) {
+        value = buyerUid != null && docId.isNotBlank() && try {
+            val entitlement = FirebaseFirestore.getInstance().collection("entitlements")
+                .document(buyerUid).collection("items").document(docId).get(Source.SERVER).await()
+            entitlement.exists() && entitlement.get("revokedAt") == null
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
+        }
+        }
+        owned
+    }
     if (uiState.isPreviewGalleryOpen && detailState is DocumentDetailState.Content) {
         DocumentPreviewGallery(
             previewRefs = detailState.detail.previewRefs,
@@ -161,7 +182,11 @@ fun DocumentDetailScreen(
             onToggleFavorite = viewModel::toggleFavorite,
             onShareClick = onShareClick,
             onBottomNavSelected = onBottomNavSelected,
-            modifier = modifier
+            modifier = modifier,
+            ownsDocument = ownsDocument,
+            buyerUid = buyerUid,
+            onReadClick = onReadClick,
+            appMode = appMode
         )
     }
 }
@@ -181,10 +206,20 @@ fun DocumentDetailContent(
     onToggleFavorite: () -> Unit,
     onShareClick: (DocumentPublicDetail) -> Unit,
     onBottomNavSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    ownsDocument: Boolean = false,
+    buyerUid: String? = null,
+    onReadClick: (String) -> Unit = onBuyClick,
+    appMode: UniAppMode = UniAppMode.BUYER
 ) {
     val contentDetail = (detailState as? DocumentDetailState.Content)?.detail
     val isFavorite = (detailState as? DocumentDetailState.Content)?.isFavorite == true
+    val isOwnListing = buyerUid != null && contentDetail?.seller?.sellerId == buyerUid
+    val actionLabel = when {
+        ownsDocument -> "Đọc tài liệu"
+        isOwnListing -> "Tài liệu của bạn"
+        else -> "Mua ngay"
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -203,7 +238,6 @@ fun DocumentDetailContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.White)
-                    .navigationBarsPadding()
             ) {
                 if (contentDetail != null) {
                     HorizontalDivider(color = Color(0xFFE6E9EF))
@@ -214,7 +248,10 @@ fun DocumentDetailContent(
                         contentAlignment = Alignment.Center
                     ) {
                         Button(
-                            onClick = { onBuyClick(contentDetail.docId) },
+                            onClick = {
+                                if (ownsDocument) onReadClick(contentDetail.docId) else onBuyClick(contentDetail.docId)
+                            },
+                            enabled = !isOwnListing || ownsDocument,
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = DetailCtaGreen,
@@ -225,11 +262,11 @@ fun DocumentDetailContent(
                                 .heightIn(min = 48.dp)
                                 .testTag("btn_buy_now")
                                 .semantics {
-                                    contentDescription = "Mua ngay tài liệu ${contentDetail.title}"
+                                    contentDescription = "$actionLabel · ${contentDetail.title}"
                                 }
                         ) {
                             Text(
-                                text = "Mua ngay",
+                                text = actionLabel,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -239,7 +276,7 @@ fun DocumentDetailContent(
                 UniBottomBar(
                     selectedRoute = "explore",
                     onItemSelected = onBottomNavSelected,
-                    mode = UniAppMode.BUYER
+                    mode = appMode
                 )
             }
         }

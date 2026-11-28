@@ -66,6 +66,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import vn.unishare.R
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import vn.unishare.core.ui.components.UniBottomBar
 import vn.unishare.core.ui.feedback.UiFeedback
 import vn.unishare.core.ui.feedback.UiFeedbackState
 import vn.unishare.core.ui.theme.UniAppMode
@@ -96,9 +98,14 @@ fun SellerDocumentsScreen(
     onCreateDocumentClick: () -> Unit,
     onRevenueTabClick: () -> Unit = {},
     onViewDetailClick: (String) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onBottomNavSelected: ((String) -> Unit)? = null
 ) {
     val state by viewModel.documentsState.collectAsState()
+    LifecycleResumeEffect(viewModel) {
+        viewModel.loadSellerDocuments()
+        onPauseOrDispose {}
+    }
 
     SellerDocumentsContent(
         state = state,
@@ -123,7 +130,8 @@ fun SellerDocumentsScreen(
         onRetryLoad = viewModel::loadSellerDocuments,
         onRefreshConflict = viewModel::refreshAfterConflict,
         onDismissFeedback = viewModel::dismissManagementFeedback,
-        modifier = modifier
+        modifier = modifier,
+        onBottomNavSelected = onBottomNavSelected
     )
 }
 
@@ -156,7 +164,8 @@ fun SellerDocumentsContent(
     onRetryLoad: () -> Unit,
     onRefreshConflict: () -> Unit,
     onDismissFeedback: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onBottomNavSelected: ((String) -> Unit)? = null
 ) {
     val totalCount = (state.listState as? SellerDocumentsListState.Content)?.items?.size ?: 0
 
@@ -169,6 +178,15 @@ fun SellerDocumentsContent(
                 SellerSectionTabs(onRevenueTabClick = onRevenueTabClick)
             }
         },
+        bottomBar = {
+            if (onBottomNavSelected != null) {
+                UniBottomBar(
+                    selectedRoute = "manage",
+                    onItemSelected = onBottomNavSelected,
+                    mode = UniAppMode.SELLER
+                )
+            }
+        },
         floatingActionButton = {
             Surface(
                 color = ManageAccentBlue,
@@ -176,7 +194,6 @@ fun SellerDocumentsContent(
                 shadowElevation = 4.dp,
                 modifier = Modifier
                     .size(68.dp)
-                    .navigationBarsPadding()
                     .clip(CircleShape)
                     .clickable(onClick = onCreateDocumentClick)
                     .testTag("fab_create_document")
@@ -891,7 +908,7 @@ private fun SellerDocumentActionSheet(
         }
 
         Column(modifier = Modifier.fillMaxWidth()) {
-            ActionSheetMenuRow(
+            if (!isArchived) ActionSheetMenuRow(
                 label = "Xem chi tiết",
                 iconRes = R.drawable.ic_eye,
                 iconTint = ManageNavy,

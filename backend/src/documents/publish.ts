@@ -473,6 +473,7 @@ publishRouter.post(
         transaction.create(catalogRef, {
           title: data.title,
           titleNormalized: normalizeTitle(data.title),
+          description: typeof data.description === "string" ? data.description : "",
           subjectId: data.subject,
           categoryId: data.category,
           priceVnd: data.priceVnd,

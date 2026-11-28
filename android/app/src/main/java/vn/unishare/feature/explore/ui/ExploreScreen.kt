@@ -108,20 +108,24 @@ fun ExploreScreen(
     viewModel: ExploreViewModel,
     onDocumentClick: (String) -> Unit,
     onBottomNavSelected: (String) -> Unit = {},
-    onNotificationsClick: () -> Unit = {},
+    onNotificationsClick: (() -> Unit)? = null,
     onProfileIconClick: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    appMode: UniAppMode = UniAppMode.BUYER,
+    hasExtendedCatalogData: Boolean = true,
+    onExitSearch: (() -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
+    val exitSearch = onExitSearch ?: viewModel::backToHome
     BackHandler(enabled = uiState.viewMode == ExploreViewMode.SEARCH) {
-        viewModel.backToHome()
+        exitSearch()
     }
 
     ExploreScreenContent(
         uiState = uiState,
         onOpenSearchMode = viewModel::openSearchMode,
-        onBackToHome = viewModel::backToHome,
+        onBackToHome = exitSearch,
         onQueryChange = viewModel::onQueryChange,
         onClearQuery = viewModel::clearQuery,
         onTopicChipClick = viewModel::onTopicChipClick,
@@ -146,12 +150,14 @@ fun ExploreScreen(
         onProfileIconClick = onProfileIconClick,
         onBottomNavSelected = { route ->
             when (route) {
-                "home" -> viewModel.backToHome()
+                "home" -> if (appMode == UniAppMode.BUYER) viewModel.backToHome()
                 "explore" -> viewModel.openSearchMode(showAllResultsImmediately = false)
             }
             onBottomNavSelected(route)
         },
-        modifier = modifier
+        modifier = modifier,
+        appMode = appMode,
+        hasExtendedCatalogData = hasExtendedCatalogData
     )
 }
 
@@ -181,12 +187,14 @@ fun ExploreScreenContent(
     onSelectSortOption: (ExploreSortOption) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
-    onNotificationsClick: () -> Unit,
+    onNotificationsClick: (() -> Unit)?,
     onProfileIconClick: () -> Unit,
     onBottomNavSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    appMode: UniAppMode = UniAppMode.BUYER,
+    hasExtendedCatalogData: Boolean = true
 ) {
-    val selectedBottomRoute = if (uiState.viewMode == ExploreViewMode.HOME) "home" else "explore"
+    val selectedBottomRoute = if (uiState.viewMode == ExploreViewMode.HOME && appMode == UniAppMode.BUYER) "home" else "explore"
     val containerBg = if (uiState.viewMode == ExploreViewMode.HOME) ExploreHomeBackground else ExploreSearchBackground
 
     Scaffold(
@@ -219,8 +227,7 @@ fun ExploreScreenContent(
             UniBottomBar(
                 selectedRoute = selectedBottomRoute,
                 onItemSelected = onBottomNavSelected,
-                mode = UniAppMode.BUYER,
-                modifier = Modifier.navigationBarsPadding()
+                mode = appMode
             )
         }
     ) { innerPadding ->
@@ -270,7 +277,8 @@ fun ExploreScreenContent(
                 onSelectMinRating = onUpdateDraftMinRating,
                 onSelectDocType = onUpdateDraftDocType,
                 onResetClick = onResetDraftFilter,
-                onApplyClick = onApplyDraftFilter
+                onApplyClick = onApplyDraftFilter,
+                hasExtendedCatalogData = hasExtendedCatalogData
             )
         }
     }
@@ -287,7 +295,8 @@ fun ExploreScreenContent(
             SortBottomSheetContent(
                 selectedOption = uiState.sortOption,
                 onSelectOption = onSelectSortOption,
-                onCloseClick = onDismissSortSheet
+                onCloseClick = onDismissSortSheet,
+                hasRatings = hasExtendedCatalogData
             )
         }
     }
@@ -299,7 +308,7 @@ fun ExploreScreenContent(
 private fun HomeTopHeader(
     selectedCategory: ExploreCategory,
     onSearchIconClick: () -> Unit,
-    onNotificationsClick: () -> Unit,
+    onNotificationsClick: (() -> Unit)?,
     onProfileIconClick: () -> Unit,
     onSelectCategory: (ExploreCategory) -> Unit
 ) {
@@ -342,7 +351,7 @@ private fun HomeTopHeader(
                             )
                         }
 
-                        IconButton(
+                        if (onNotificationsClick != null) IconButton(
                             onClick = onNotificationsClick,
                             modifier = Modifier.size(44.dp)
                         ) {
@@ -1372,7 +1381,8 @@ private fun AdvancedFilterSheetContent(
     onSelectMinRating: (Double?) -> Unit,
     onSelectDocType: (ExploreDocType) -> Unit,
     onResetClick: () -> Unit,
-    onApplyClick: () -> Unit
+    onApplyClick: () -> Unit,
+    hasExtendedCatalogData: Boolean
 ) {
     var schoolMenuExpanded by remember { mutableStateOf(false) }
 
@@ -1459,7 +1469,7 @@ private fun AdvancedFilterSheetContent(
             }
 
             // 2. Trường
-            FilterSectionBlock(title = "Trường") {
+            if (hasExtendedCatalogData) FilterSectionBlock(title = "Trường") {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Surface(
                         color = Color.White,
@@ -1590,7 +1600,7 @@ private fun AdvancedFilterSheetContent(
             }
 
             // 4. Điểm số người bán
-            FilterSectionBlock(title = "Điểm số người bán") {
+            if (hasExtendedCatalogData) FilterSectionBlock(title = "Điểm số người bán") {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1609,7 +1619,7 @@ private fun AdvancedFilterSheetContent(
             }
 
             // 5. Loại tài liệu
-            FilterSectionBlock(title = "Loại tài liệu") {
+            if (hasExtendedCatalogData) FilterSectionBlock(title = "Loại tài liệu") {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1707,7 +1717,8 @@ private fun FilterOptionChip(
 private fun SortBottomSheetContent(
     selectedOption: ExploreSortOption,
     onSelectOption: (ExploreSortOption) -> Unit,
-    onCloseClick: () -> Unit
+    onCloseClick: () -> Unit,
+    hasRatings: Boolean
 ) {
     Column(
         modifier = Modifier
@@ -1751,7 +1762,7 @@ private fun SortBottomSheetContent(
             }
         }
 
-        ExploreSortOption.entries.forEach { option ->
+        ExploreSortOption.entries.filter { hasRatings || it != ExploreSortOption.HIGHEST_RATED }.forEach { option ->
             val isSelected = option == selectedOption
             val iconRes = when (option) {
                 ExploreSortOption.PRICE_ASC -> R.drawable.ic_switch_role
@@ -1920,6 +1931,7 @@ private fun RatingCompactRow(
     rating: Double,
     reviewCount: Int
 ) {
+    if (reviewCount <= 0) return
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1931,7 +1943,7 @@ private fun RatingCompactRow(
             modifier = Modifier.size(12.dp)
         )
         Text(
-            text = if (reviewCount == 0) "Chưa có đánh giá" else "$rating ($reviewCount)",
+            text = "$rating ($reviewCount)",
             color = ExploreSearchTitleInk,
             fontSize = 10.sp
         )

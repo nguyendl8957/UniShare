@@ -6,6 +6,7 @@ import {
 
 import { requireAuth } from "../shared/firebaseAuth";
 import { sendApiError } from "../shared/httpErrors";
+import { DocumentAccessError, resolveEntitledPdf } from "./entitlement";
 
 export const libraryRouter = Router();
 
@@ -59,42 +60,20 @@ libraryRouter.get("/library", requireAuth, async (req, res) => {
       pageDocs.map(async entitlementDoc => {
         const entitlement = entitlementDoc.data();
 
-        if (
-          entitlement.revokedAt != null ||
-          typeof entitlement.versionId !== "string" ||
-          !ID_PATTERN.test(entitlement.versionId)
-        ) {
-          return null;
-        }
-
         const docId = entitlementDoc.id;
+        const authorized = await resolveEntitledPdf(uid, docId, entitlement, db)
+          .catch((error: unknown) => {
+            if (error instanceof DocumentAccessError) return null;
+            throw error;
+          });
+        if (!authorized) return null;
 
         const documentSnapshot = await db
           .collection("documents")
           .doc(docId)
           .get();
 
-        if (!documentSnapshot.exists) return null;
-
-        const document = documentSnapshot.data()!;
-
-        const versionSnapshot = await db
-          .collection("documents")
-          .doc(docId)
-          .collection("versions")
-          .doc(entitlement.versionId)
-          .get();
-
-        if (!versionSnapshot.exists) return null;
-
-        const version = versionSnapshot.data()!;
-
-        if (
-          version.pdfPath !==
-          `private/${docId}/${entitlement.versionId}/source.pdf`
-        ) {
-          return null;
-        }
+        const document = documentSnapshot.data();
 
         const grantedAt = entitlement.grantedAt;
 
@@ -105,13 +84,13 @@ libraryRouter.get("/library", requireAuth, async (req, res) => {
 
         return {
           docId,
-          versionId: entitlement.versionId,
+          versionId: authorized.versionId,
           title:
-            typeof document.title === "string"
+            typeof document?.title === "string" && document.title.trim()
               ? document.title
               : "Tài liệu đã mua",
           purchasedAt,
-          isSellerArchived: document.status === "ARCHIVED"
+          isSellerArchived: document?.status === "ARCHIVED"
         };
       })
     );

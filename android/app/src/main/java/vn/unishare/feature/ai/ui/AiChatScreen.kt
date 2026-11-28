@@ -48,7 +48,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,7 +94,9 @@ fun AiChatScreen(
     onBottomNavSelected: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(docId, documentTitle) {
         viewModel.bindDocument(docId = docId, documentTitle = documentTitle)
@@ -105,7 +109,11 @@ fun AiChatScreen(
             uiState = uiState,
             onBackClick = onBackClick,
             onInputChanged = viewModel::onInputChanged,
-            onSendClick = viewModel::sendQuestion,
+            onSendClick = {
+                focusManager.clearFocus()
+                keyboard?.hide()
+                viewModel.sendQuestion()
+            },
             onSuggestionClick = viewModel::sendSuggestion,
             onRetryClick = viewModel::retryLastFailedMessage,
             onCitationClick = { page ->
@@ -136,7 +144,8 @@ fun AiChatScreenContent(
 
     LaunchedEffect(uiState.messages.size, uiState.isSending) {
         if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.lastIndex)
+            val latestRow = uiState.messages.size + if (uiState.isSending) 1 else 0
+            listState.animateScrollToItem(latestRow)
         }
     }
 
@@ -156,6 +165,7 @@ fun AiChatScreenContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.White)
+                    .imePadding()
             ) {
                 if (uiState.canCompose) {
                     AiComposerArea(
@@ -168,8 +178,7 @@ fun AiChatScreenContent(
                 UniBottomBar(
                     selectedRoute = "purchased",
                     onItemSelected = onBottomNavSelected,
-                    mode = UniAppMode.BUYER,
-                    modifier = Modifier.navigationBarsPadding()
+                    mode = UniAppMode.BUYER
                 )
             }
         }
@@ -731,7 +740,6 @@ private fun AiComposerArea(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White)
-            .imePadding()
             .padding(top = 8.dp, bottom = 8.dp)
     ) {
         Row(

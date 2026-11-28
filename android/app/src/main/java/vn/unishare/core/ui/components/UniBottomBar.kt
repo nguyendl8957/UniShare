@@ -2,7 +2,6 @@ package vn.unishare.core.ui.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -105,9 +104,7 @@ fun UniBottomBar(
     Surface(
         color = Color.White,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = modifier
-            .height(80.dp)
-            .semantics {
+        modifier = modifier.semantics {
                 contentDescription = "Thanh điều hướng chính (${mode.name})"
             }
     ) {

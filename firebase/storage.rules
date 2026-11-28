@@ -40,6 +40,18 @@ service firebase.storage {
         && previewPath in catalog.data.previewRefs;
     }
 
+    match /avatars/{uid}/{fileName} {
+      allow get, delete: if signedInAs(uid)
+        && fileName.matches('[a-f0-9-]{36}\\.jpg');
+      allow create: if signedInAs(uid)
+        && resource == null
+        && fileName.matches('[a-f0-9-]{36}\\.jpg')
+        && request.resource.size > 0
+        && request.resource.size <= 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow list, update: if false;
+    }
+
     // PDF goc: client khong duoc doc, ghi hoac tai truc tiep.
     match /private/{allPaths=**} {
       allow read, write: if false;

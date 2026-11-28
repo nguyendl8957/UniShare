@@ -1,5 +1,7 @@
 package vn.unishare.feature.profile.ui
 
+import vn.unishare.data.remote.readAtMost
+
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CancellationException
@@ -146,7 +148,7 @@ class BuyerProfileRoleContract(
                             }
 
                             val bytes = connection.inputStream.use {
-                                it.readNBytes(8193)
+                                it.readAtMost(8193)
                             }
 
                             if (bytes.size > 8192) {
@@ -224,16 +226,7 @@ class BuyerProfileRoleContract(
         }
 
         try {
-            val user = auth.currentUser
-                ?: return Result.failure(
-                    IllegalStateException("Vui lòng đăng nhập.")
-                )
-
-            val token = user.getIdToken(false).await().token
-                ?: return Result.failure(
-                    IllegalStateException("Không thể xác thực.")
-                )
-
+            val token = auth.currentUser?.getIdToken(false)?.await()?.token
             val profile = withContext(Dispatchers.IO) {
                 val connection = URL(
                     "$apiBaseUrl/v1/seller/$sellerId/public-profile"
@@ -245,9 +238,7 @@ class BuyerProfileRoleContract(
                     connection.readTimeout = 20000
                     connection.instanceFollowRedirects = false
 
-                    connection.setRequestProperty(
-                        "Authorization", "Bearer $token"
-                    )
+                    if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
                     connection.setRequestProperty(
                         "Accept", "application/json"
                     )
@@ -263,7 +254,7 @@ class BuyerProfileRoleContract(
                             }
 
                             val bytes = connection.inputStream.use {
-                                it.readNBytes(131073)
+                                it.readAtMost(131073)
                             }
 
                             check(bytes.size <= 131072) {
@@ -355,10 +346,6 @@ class BuyerProfileRoleContract(
                 } finally {
                     connection.disconnect()
                 }
-            }
-
-            check(auth.currentUser?.uid == user.uid) {
-                "Tài khoản đã thay đổi."
             }
 
             return Result.success(profile)

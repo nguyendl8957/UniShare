@@ -192,10 +192,9 @@ test("Phase 1 Seller metadata and lifecycle", async (t) => {
       assert.equal(catalog.get("title"), "Final Published Title");
       assert.equal(catalog.get("priceVnd"), 21000);
     });
-    await t.test("public Seller profile excludes private fields", async () => {
+    await t.test("Guest can view the public Seller profile without receiving private fields", async () => {
       const response = await request(app)
-        .get(`/v1/seller/${seller.uid}/public-profile`)
-        .set("Authorization", auth(other.token));
+        .get(`/v1/seller/${seller.uid}/public-profile`);
 
       assert.equal(response.status, 200, JSON.stringify(response.body));
       assert.equal(response.body.sellerId, seller.uid);

@@ -21,6 +21,8 @@ interface AuthRepository {
         password: String
     ): Result<Unit>
 
+    suspend fun signInWithGoogle(idToken: String): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Đăng nhập Google chưa được cấu hình."))
     suspend fun sendPasswordReset(
         email: String
     ): Result<Unit>
