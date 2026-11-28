@@ -120,7 +120,11 @@ fun UniBottomBar(
                         Icon(
                             painter = painterResource(id = iconRes),
                             contentDescription = "Biểu tượng ${item.title}",
-                            tint = Color.Unspecified, // Giữ nguyên màu gốc của Vector Asset từ Figma
+                            tint = if (isSelected && mode == UniAppMode.SELLER && item.route == "explore") {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Unspecified
+                            },
                             modifier = Modifier.size(24.dp)
                         )
                     },

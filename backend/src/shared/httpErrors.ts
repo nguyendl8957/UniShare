@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 export type ApiErrorCode =
   | "INVALID_REQUEST"
+  | "INVALID_PDF"
   | "UNAUTHENTICATED"
   | "FORBIDDEN"
   | "NOT_FOUND"

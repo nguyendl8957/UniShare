@@ -78,13 +78,14 @@ async function seedE2EOrderAndDocument(options?: {
   amountVnd?: number;
   expired?: boolean;
   buyerId?: string;
+  sellerId?: string;
 }) {
   const db = getFirestore();
   const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
   const orderId = `ord_${randomBytes(8).toString("hex")}`;
   const docId = `doc_e2e_${suffix}`;
   const buyerId = options?.buyerId ?? `buyer1_e2e_${suffix}`;
-  const sellerId = `seller_e2e_${suffix}`;
+  const sellerId = options?.sellerId ?? `seller_e2e_${suffix}`;
   const versionId = "v1";
   const amountVnd = options?.amountVnd ?? 12000;
   const paymentCode = OrderPolicy.generatePaymentCode();
@@ -225,7 +226,8 @@ test("Paid purchase appears in library and serves the same version after listing
 
   const buyer = await createEmulatorBuyer();
   const other = await createEmulatorBuyer();
-  const fixture = await seedE2EOrderAndDocument({ buyerId: buyer.localId });
+  const seller = await createEmulatorBuyer();
+  const fixture = await seedE2EOrderAndDocument({ buyerId: buyer.localId, sellerId: seller.localId });
   const db = getFirestore();
   const document = db.collection("documents").doc(fixture.docId);
   const file = getStorage().bucket(bucketName)
@@ -240,11 +242,28 @@ test("Paid purchase appears in library and serves the same version after listing
     sizeBytes: bytes.length
   });
 
-  const webhook = await sendSignedSepayWebhook({
+  await db.collection("users").doc(seller.localId).set({ sellerEnabled: true });
+  await seedE2EOrderAndDocument({ sellerId: seller.localId });
+  const txn = {
     txnId: `txn_library_${randomUUID()}`,
     content: `SEVQR ${fixture.paymentCode}`
-  });
+  };
+  const webhook = await sendSignedSepayWebhook(txn);
   assert.equal(webhook.body.status, "MATCHED");
+  assert.equal((await sendSignedSepayWebhook(txn)).status, 200);
+
+  const revenue = await request(app).get("/v1/me/revenue")
+    .set("Authorization", `Bearer ${seller.idToken}`);
+  assert.equal(revenue.status, 200);
+  assert.deepEqual(revenue.body, {
+    totalRevenueVnd: fixture.order.amountVnd,
+    paidOrderCount: 1,
+    totalDocumentsSold: 1
+  });
+  const sales = await request(app).get("/v1/me/sales")
+    .set("Authorization", `Bearer ${seller.idToken}`);
+  assert.equal(sales.status, 200);
+  assert.deepEqual(sales.body.items.map((item: { orderId: string }) => item.orderId), [fixture.order.orderId]);
 
   const library = (token: string) => request(app).get("/v1/me/library")
     .set("Authorization", `Bearer ${token}`);

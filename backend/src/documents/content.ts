@@ -3,6 +3,7 @@ import { getStorage } from "firebase-admin/storage";
 
 import { requireAuth } from "../shared/firebaseAuth";
 import { sendApiError } from "../shared/httpErrors";
+import { hasPdfHeader } from "./pdfValidation";
 import {
   authorizePdfRead,
   DocumentAccessError
@@ -77,7 +78,7 @@ contentRouter.get(
 
       if (
         pdfBytes.length !== authorized.sizeBytes ||
-        pdfBytes.subarray(0, 5).toString("ascii") !== "%PDF-"
+        !hasPdfHeader(pdfBytes)
       ) {
         sendApiError(
           res,

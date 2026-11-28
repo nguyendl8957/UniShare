@@ -1,5 +1,6 @@
 package vn.unishare.core.ui.feedback
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -28,7 +29,8 @@ sealed interface UiFeedbackState {
     data object Loading : UiFeedbackState
     data class Empty(
         val message: String,
-        val subtitle: String? = null
+        val subtitle: String? = null,
+        @param:DrawableRes val illustrationRes: Int = R.drawable.ic_search_empty_illustration
     ) : UiFeedbackState
     data class Error(
         val message: String = "Đã xảy ra lỗi mạng. Vui lòng thử lại!"
@@ -59,7 +61,7 @@ fun UiFeedback(
                 )
             }
             is UiFeedbackState.Empty -> {
-                EmptyScreen(message = state.message, subtitle = state.subtitle)
+                EmptyScreen(state.message, state.subtitle, state.illustrationRes)
             }
             is UiFeedbackState.Error -> {
                 ErrorScreen(message = state.message, onRetry = onRetry)
@@ -147,7 +149,8 @@ private fun SkeletonListPlaceholder() {
 @Composable
 private fun EmptyScreen(
     message: String,
-    subtitle: String? = null
+    subtitle: String?,
+    @DrawableRes illustrationRes: Int
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -156,7 +159,7 @@ private fun EmptyScreen(
             .semantics { contentDescription = "Màn hình rỗng: $message" }
     ) {
         Image(
-            painter = painterResource(id = R.drawable.ic_search_empty_illustration),
+            painter = painterResource(id = illustrationRes),
             contentDescription = null,
             modifier = Modifier
                 .width(132.dp)

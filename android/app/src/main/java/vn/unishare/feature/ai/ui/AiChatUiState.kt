@@ -71,8 +71,10 @@ sealed class AiChatFailure(message: String) : Exception(message) {
     class QuotaExceeded(message: String = "Bạn đã hết lượt hỏi AI trong phiên. Vui lòng thử lại sau.") :
         AiChatFailure(message)
 
-    class ServiceUnavailable(message: String = "Trợ lý AI đang quá tải hoặc hết thời gian phản hồi.") :
-        AiChatFailure(message)
+    class ServiceUnavailable(
+        message: String = "Trợ lý AI tạm thời gián đoạn. Vui lòng thử lại sau.",
+        val retryable: Boolean = true
+    ) : AiChatFailure(message)
 }
 
 // State hội thoại AI chỉ lưu trong phiên hiện tại, không lưu xuống Firestore hay log

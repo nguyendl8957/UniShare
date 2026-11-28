@@ -10,7 +10,7 @@ import { getStorage } from "firebase-admin/storage";
 import { initializeFirebaseAdmin } from "../src/shared/firebaseAuth";
 import { createAiChatRouter } from "../src/ai/chatRoute";
 import { utcDay } from "../src/ai/quota";
-import type { AiProvider } from "../src/ai/provider";
+import { AiProviderError, type AiProvider } from "../src/ai/provider";
 
 test("A08 HTTP quota, cache and idempotency", async (t) => {
   assert.equal(process.env.FIREBASE_PROJECT_ID, "demo-unishare");
@@ -64,6 +64,7 @@ test("A08 HTTP quota, cache and idempotency", async (t) => {
 
   let providerCalls = 0;
   let receivedPdfText = "";
+  let rateLimited = false;
 
   const provider: AiProvider = {
     async ask(input) {
@@ -75,6 +76,7 @@ test("A08 HTTP quota, cache and idempotency", async (t) => {
       assert.equal(input.pages[0].page, 1);
 
       receivedPdfText = input.pages[0].text;
+      if (rateLimited) throw new AiProviderError("GEMINI_RATE_LIMIT", "Test upstream 429");
 
       return {
         answer: "Câu trả lời từ provider giả lập.",
@@ -174,6 +176,23 @@ test("A08 HTTP quota, cache and idempotency", async (t) => {
       assert.equal(providerCalls, 1);
     });
 
+    await t.test("503 - Gemini rate limit permits one manual retry with the same ID", async () => {
+      const next = { ...body, clientMessageId: `msg_${randomUUID().replace(/-/g, "")}` };
+      rateLimited = true;
+      const unavailable = await ask(next);
+      assert.equal(unavailable.status, 503);
+      assert.equal(unavailable.body.error.code, "GEMINI_RATE_LIMIT");
+      assert.equal(providerCalls, 2);
+      assert.equal((await dayRef.get()).get("requests"), 1);
+
+      rateLimited = false;
+      const retried = await ask(next);
+      assert.equal(retried.status, 200);
+      assert.deepEqual(retried.body.citations, [{ page: 1 }]);
+      assert.equal(providerCalls, 3);
+      assert.equal((await dayRef.get()).get("requests"), 2);
+    });
+
     await t.test("429 - quota blocks new question", async () => {
       await dayRef.update({
         requests: 10
@@ -186,7 +205,7 @@ test("A08 HTTP quota, cache and idempotency", async (t) => {
 
       assert.equal(res.status, 429, JSON.stringify(res.body));
       assert.equal(res.body.error.code, "QUOTA_EXCEEDED");
-      assert.equal(providerCalls, 1);
+      assert.equal(providerCalls, 3);
     });
   } finally {
     const requests = await db.collection("aiUsage")

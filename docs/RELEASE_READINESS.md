@@ -132,3 +132,103 @@ Thay đổi hiện ở working tree của `fix/release-readiness`, HEAD `829f370
 - `firebase/storage.rules`
 - `firebase/tests/rules/storage.test.cjs`
 - `android/app/src/main/java/vn/unishare/data/remote/ResponseBody.kt`
+
+## Nghiệm thu lần 2 — Sửa lỗi sau kiểm thử trên điện thoại
+
+Đợt sửa dựa trên commit `7208a97` của nhánh `fix/release-readiness`. Các ca tích hợp dùng Firebase Emulator với project `demo-unishare`. Thông tin revision production và Cloud Logging được kiểm tra ở chế độ đọc.
+
+### Đăng bán PDF và Gemini
+
+- **BUG-01.** `publish.ts` trả HTTP 409 `Invalid PDF header` khi byte đầu đối tượng staging khác chữ ký `%PDF-`. Bộ đọc cũ bắt buộc chữ ký ở offset 0. Ca local tái hiện sự khác biệt bằng PDF hai trang có BOM và khoảng trắng trước header, sau đó kiểm tra byte của bản lưu riêng tư. Backend mới kiểm tra header trong 1.024 byte đầu, giới hạn phần đệm ở BOM và ký tự trắng, kiểm tra kết thúc và cấu trúc PDF, đồng thời tải đúng generation. Android đọc đầu luồng SAF khi chọn tệp, mở luồng riêng cho upload và kiểm tra byte bằng hash. Wizard hiển thị giới hạn 25 MiB từ cùng hằng số dùng để kiểm tra dung lượng. Request ID `c0bb8f9c-1daf-4277-a403-83f6b4265d94` không có bản ghi khớp trong truy vấn log và tệp gốc chưa được đính kèm. Cần thử lại chính tệp gốc sau khi deploy để xác định trường hợp trên điện thoại.
+- **BUG-02.** Revision `api-00009-moj` tại `asia-southeast1` có binding secret Gemini, cờ AI chưa bật và allowlist có 0 UID. Hai request AI 503 hoàn tất trong khoảng 36–47 ms. Cấu hình khiến gateway trả lỗi trước bước gọi Gemini. Backend và Android tách rõ tắt tính năng, UID chưa được cấp quyền, cấu hình thiếu, PDF không đọc được, hết lượt, lỗi upstream và timeout. Client chờ 65 giây, Function có giới hạn 60 giây và adapter Gemini chờ 15 giây. Retry thủ công dùng lại mã tin nhắn. Gateway hoàn lượt khi upstream xác nhận 429 và bảo toàn reservation khi kết quả upstream chưa rõ. Gemini live, quota và billing của tài khoản vẫn chờ nghiệm thu. [Tài liệu Gemini 3.5 Flash-Lite](https://aistudio.google.com/docs/models/gemini-3.5-flash-lite)
+- UniShare dùng `gemini-3.5-flash-lite`. Gateway lấy văn bản theo trang từ PDF đã được cấp quyền rồi gửi đoạn văn bản có giới hạn sang Gemini. Giới hạn AI là 2 MiB và 20 trang.
+
+### Hồi quy theo lỗi
+
+| Lỗi | Thay đổi và bằng chứng local |
+| --- | --- |
+| BUG-03 | `CheckoutScreen.kt` đặt insets ở header. Kiểm thử PAID đo nút quay lại nằm dưới status bar và kiểm tra nút đọc ở 412dp và 360dp. |
+| BUG-04 | `ExploreScreen.kt` chọn palette theo `UniAppMode`. `UniBottomBar.kt` dùng màu Seller cho icon đang chọn. Kiểm thử ảnh của nút lọc xác nhận xanh Buyer và Seller trên hai cấu hình. |
+| BUG-05 | `SellerDocumentsScreen.kt` dùng vector xanh dương, một CTA trong trạng thái rỗng và icon hệ thống sáng trên header xanh đậm. Kiểm thử xác nhận màu icon được phục hồi khi rời màn hình. |
+| BUG-06 | `DocumentUploadRepositoryImpl.kt`, `UploadWizardViewModel.kt`, Checkout và AI chuyển lỗi HTTP thành thông báo tiếng Việt. Kiểm thử PDF lỗi xác nhận nút retry bị tắt khi cần chọn tệp khác. Log Android `UniShareUpload` lưu mã HTTP và request ID hợp lệ. |
+| BUG-07 | Backend kiểm tra publish và retry, sửa metadata, ẩn và mở bán lại, quyền đọc version đã mua, doanh thu từ đơn PAID và webhook lặp. Dashboard và Revenue dùng cùng API tổng hợp. |
+| BUG-08 | Fixture xác nhận citation gửi đúng tài liệu và số trang. Reader lấy trang từ SavedStateHandle sau khi PDF tải xong, bỏ qua trang vượt phạm vi và chặn Buyer chưa có entitlement. Ca Gemini live chờ cấu hình production. |
+
+Hai cấu hình giao diện được kiểm tra trên Android Emulator. 412dp dùng điều hướng cử chỉ và cỡ chữ mặc định. 360dp dùng điều hướng ba nút và font scale 1,3. Ảnh minh họa dùng dữ liệu test.
+
+- [Checkout PAID 360dp](D:/AndroidStudio/UniShare/android/app/build/release-check/checkout-paid-360-three-button.png)
+- [Quản lý Seller trống 360dp](D:/AndroidStudio/UniShare/android/app/build/release-check/seller-management-empty-360-three-button.png)
+- [Document Picker và nhãn 25 MiB trên APK bàn giao](D:/AndroidStudio/UniShare/android/app/build/release-check/seller-upload-pdf-412-gesture.png)
+
+### Kết quả kiểm thử
+
+- Android Debug và Release build thành công. Lint ghi nhận 0 lỗi và 59 cảnh báo. Android unit test đạt 93/93, thêm ba ca về phân loại lỗi AI và thay PDF sau publish thất bại.
+- Bộ instrumentation 412dp kiểm tra 61 ca. Lượt đầy đủ đạt 59 ca. Hai ca còn lại đạt khi chạy riêng với thao tác cuộn tới mã chuyển khoản và chờ Document Picker trả trạng thái. Lượt chạy lại trên APK bàn giao đạt 2/2, xác nhận PDF hai trang do Android xuất qua Content URI, nhãn 25 MiB, publish, Catalog, Seller Management và archive. Ba ca giao diện trọng điểm đạt trên cấu hình 360dp với font scale 1,3. So với baseline, bộ đầy đủ có thêm ca theme Explore, Quản lý Seller rỗng và nạp citation vào Reader.
+- Backend typecheck và build thành công. Backend đạt 131/131 trên Firebase Emulator, thêm ca kiểm tra PDF, cấu hình AI, quota và timeout. Rules đạt 43/43. Gemini live cần UID và cấu hình production.
+- File bàn giao [APK Debug](D:/AndroidStudio/UniShare/android/app/build/outputs/apk/debug/app-debug.apk) đã qua kiểm tra chữ ký. SHA-256 `F065ED68B56F69813AB9FE8026FDE1FD2A1786EAE5148D8994F96AA6D84869D5`.
+
+### Triển khai và kiểm lại trên điện thoại
+
+1. Firebase Console → Authentication → Users. Lấy UID của tài khoản Buyer đã mua tài liệu dùng để thử AI.
+2. Trong `backend/.env.unishare-db44a`, đặt `UNISHARE_AI_ENABLED=true` và `UNISHARE_AI_TEST_UIDS=<UID Buyer>`. Nhiều UID phân tách bằng dấu phẩy. Kiểm tra binding `GEMINI_API_KEY` trong Google Cloud Console → Cloud Run functions → `api` → cấu hình revision. Nếu lỗi upstream tiếp diễn sau deploy, mở Google AI Studio để kiểm tra project của key và trang Usage/Rate Limits, sau đó xem log với request ID.
+3. Chạy từ thư mục gốc sau khi duyệt diff. Lệnh chỉ triển khai Function `api`. Các Rules hiện hành đã qua regression local.
+
+```powershell
+npm --prefix backend run build
+if ($LASTEXITCODE -eq 0) {
+    firebase deploy --only functions:api --project unishare-db44a
+}
+```
+
+4. Kiểm tra `/health` trả 200 trên revision mới. Cài APK Debug mới rồi thử lại chính PDF từng lỗi và một PDF hai trang khác. Xác nhận tài liệu xuất hiện trong Quản lý và Catalog. Sửa tên, ẩn, mở lại và kiểm tra quyền đọc của Buyer đã mua.
+5. Mở đơn đã thanh toán để kiểm tra header và nút Đọc tài liệu. Chuyển Buyer/Seller và so màu Khám phá, mở Quản lý với Seller trống để kiểm tra hình minh họa, icon hệ thống và CTA. Mở PDF có văn bản dưới giới hạn AI, hỏi câu gợi ý, bấm citation và xác nhận Reader mở đúng trang. Đối chiếu doanh thu với đơn đã ghi nhận.
+
+### Tệp thay đổi trong đợt sửa
+
+Git ghi nhận 39 tệp đã chỉnh sửa. Ba tệp bổ sung được liệt kê bên dưới danh sách này.
+- `android/app/src/androidTest/java/vn/unishare/feature/ai/AiChatScreenTest.kt`
+- `android/app/src/androidTest/java/vn/unishare/feature/explore/ExploreFlowTest.kt`
+- `android/app/src/androidTest/java/vn/unishare/feature/library/PdfReaderControllerIntegrationTest.kt`
+- `android/app/src/androidTest/java/vn/unishare/feature/payment/CheckoutScreenTest.kt`
+- `android/app/src/androidTest/java/vn/unishare/feature/seller/C04FirebaseIntegrationTest.kt`
+- `android/app/src/androidTest/java/vn/unishare/feature/seller/SellerUploadFlowTest.kt`
+- `android/app/src/main/java/vn/unishare/core/ui/components/UniBottomBar.kt`
+- `android/app/src/main/java/vn/unishare/core/ui/feedback/UiFeedback.kt`
+- `android/app/src/main/java/vn/unishare/data/remote/PurchasedPdfApi.kt`
+- `android/app/src/main/java/vn/unishare/data/remote/ResponseBody.kt`
+- `android/app/src/main/java/vn/unishare/data/repository/DocumentUploadRepositoryImpl.kt`
+- `android/app/src/main/java/vn/unishare/feature/ai/ui/AiChatScreen.kt`
+- `android/app/src/main/java/vn/unishare/feature/ai/ui/AiChatUiState.kt`
+- `android/app/src/main/java/vn/unishare/feature/ai/ui/AiChatViewModel.kt`
+- `android/app/src/main/java/vn/unishare/feature/ai/ui/HttpDocumentAiRepository.kt`
+- `android/app/src/main/java/vn/unishare/feature/explore/ui/ExploreScreen.kt`
+- `android/app/src/main/java/vn/unishare/feature/payment/ui/CheckoutScreen.kt`
+- `android/app/src/main/java/vn/unishare/feature/payment/ui/CheckoutViewModel.kt`
+- `android/app/src/main/java/vn/unishare/feature/seller/ui/SellerDocumentsScreen.kt`
+- `android/app/src/main/java/vn/unishare/feature/seller/ui/UploadWizardScreen.kt`
+- `android/app/src/main/java/vn/unishare/feature/seller/ui/UploadWizardViewModel.kt`
+- `android/app/src/test/java/vn/unishare/feature/ai/AiHttpStatusTest.kt`
+- `android/app/src/test/java/vn/unishare/feature/seller/UploadWizardViewModelTest.kt`
+- `backend/src/ai/chatRoute.ts`
+- `backend/src/ai/geminiProvider.ts`
+- `backend/src/ai/pdfSource.ts`
+- `backend/src/ai/pdfText.ts`
+- `backend/src/ai/provider.ts`
+- `backend/src/ai/quotaLifecycle.ts`
+- `backend/src/documents/content.ts`
+- `backend/src/documents/publish.ts`
+- `backend/src/shared/httpErrors.ts`
+- `backend/tests/aiChat.test.ts`
+- `backend/tests/aiChatHttp.test.ts`
+- `backend/tests/aiDisabled.test.ts`
+- `backend/tests/aiGeminiProvider.test.ts`
+- `backend/tests/documentPublish.test.ts`
+- `backend/tests/paymentE2E.test.ts`
+- `docs/RELEASE_READINESS.md`
+
+Các tệp mới
+
+
+- `backend/src/documents/pdfValidation.ts` chứa kiểm tra header dùng chung cho publish, Reader và AI, cùng kiểm tra dấu kết thúc cho publish.
+- `android/app/src/main/res/drawable/ic_seller_empty_illustration.xml` có màu Seller ở từng nét và mảng của vector.
+- `android/app/src/androidTest/java/vn/unishare/RegressionScreenshot.kt` chỉ chụp fixture trên emulator khi test runner yêu cầu.

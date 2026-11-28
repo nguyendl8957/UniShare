@@ -222,14 +222,14 @@ export async function beginAiRequest(
 export async function finishAiRequest(
   input: AiRequestIdentity,
   dayUtc: string,
-  outcome: "SUCCESS" | "NOT_SENT",
+  outcome: "SUCCESS" | "NOT_SENT" | "REJECTED",
   actualTokens = 0,
   db: Firestore = getFirestore(),
   cachedAnswer?: AiCachedAnswer
 ): Promise<FinishResult> {
   if (
     (outcome === "SUCCESS" && !validCachedAnswer(cachedAnswer)) ||
-    (outcome === "NOT_SENT" && cachedAnswer !== undefined)
+    (outcome !== "SUCCESS" && cachedAnswer !== undefined)
   ) {
     throw new Error("Invalid AI cached answer");
   }
@@ -240,7 +240,8 @@ export async function finishAiRequest(
     !Number.isSafeInteger(actualTokens) ||
     actualTokens < 0 ||
     actualTokens > 1000000 ||
-    (outcome === "NOT_SENT" && actualTokens !== 0) || (outcome !== "SUCCESS" && outcome !== "NOT_SENT")
+    (outcome !== "SUCCESS" && actualTokens !== 0) ||
+    (outcome !== "SUCCESS" && outcome !== "NOT_SENT" && outcome !== "REJECTED")
   ) {
     throw new Error("Invalid AI settlement");
   }

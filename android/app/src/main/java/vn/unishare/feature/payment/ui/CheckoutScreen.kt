@@ -141,6 +141,7 @@ fun CheckoutScreenContent(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                     .height(56.dp)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -167,7 +168,7 @@ fun CheckoutScreenContent(
     ) { innerPadding ->
         // Trạng thái đang tải dữ liệu lần đầu
         if (uiState.isLoading && uiState.order == null) {
-            UiFeedback(state = UiFeedbackState.Loading)
+            UiFeedback(state = UiFeedbackState.Loading, modifier = Modifier.padding(innerPadding))
             return@Scaffold
         }
 
@@ -177,7 +178,8 @@ fun CheckoutScreenContent(
                 state = UiFeedbackState.Error(
                     message = uiState.networkError
                 ),
-                onRetry = onManualRefresh
+                onRetry = onManualRefresh,
+                modifier = Modifier.padding(innerPadding)
             )
             return@Scaffold
         }
@@ -188,7 +190,8 @@ fun CheckoutScreenContent(
                 state = UiFeedbackState.Error(
                     message = uiState.businessError
                 ),
-                onRetry = onManualRefresh
+                onRetry = onManualRefresh,
+                modifier = Modifier.padding(innerPadding)
             )
             return@Scaffold
         }

@@ -7,6 +7,7 @@ import sharp from "sharp";
 
 import { requireAuth } from "../shared/firebaseAuth";
 import { sendApiError } from "../shared/httpErrors";
+import { hasPdfEndMarker, hasPdfHeader } from "./pdfValidation";
 
 export const publishRouter = Router();
 
@@ -38,7 +39,11 @@ type SavedFile = VerifiedFile & {
   destinationGeneration: string;
 };
 
-class PublishConflict extends Error {}
+class PublishConflict extends Error {
+  constructor(message: string, readonly code: "INVALID_REQUEST" | "INVALID_PDF" = "INVALID_REQUEST") {
+    super(message);
+  }
+}
 
 function normalizeTitle(value: string): string {
   return value
@@ -162,27 +167,29 @@ async function verifyStagingFile(
     throw new PublishConflict("Invalid file MIME");
   }
 
-  const [bytes] = await file.download();
+  const [bytes] = await file.bucket.file(sourcePath, { generation }).download();
 
   if (bytes.length !== size || bytes.length > maxBytes) {
     throw new PublishConflict("File size mismatch");
   }
 
   if (type === "pdf") {
-    if (bytes.subarray(0, 5).toString() !== "%PDF-") {
-      throw new PublishConflict("Invalid PDF header");
+    if (!hasPdfHeader(bytes)) {
+      throw new PublishConflict("Invalid PDF header", "INVALID_PDF");
     }
 
     try {
+      if (!hasPdfEndMarker(bytes)) throw new Error("Missing PDF end marker");
       const pdf = await PDFDocument.load(bytes, {
-        updateMetadata: false
+        updateMetadata: false,
+        throwOnInvalidObject: true
       });
 
       if (pdf.getPageCount() < 1) {
         throw new Error("Empty PDF");
       }
     } catch {
-      throw new PublishConflict("Invalid PDF structure");
+      throw new PublishConflict("Invalid PDF structure", "INVALID_PDF");
     }
   } else {
     try {
@@ -493,7 +500,7 @@ publishRouter.post(
       });
     } catch (error) {
       if (error instanceof PublishConflict) {
-        sendApiError(res, 409, "INVALID_REQUEST", error.message);
+        sendApiError(res, 409, error.code, error.message);
         return;
       }
 

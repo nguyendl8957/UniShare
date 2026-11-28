@@ -2,6 +2,7 @@ package vn.unishare.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.StorageException
@@ -15,6 +16,9 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import vn.unishare.data.remote.PDF_HEADER_PROBE_BYTES
+import vn.unishare.data.remote.hasPdfHeader
+import vn.unishare.data.remote.readAtMost
 import vn.unishare.domain.repository.DocumentDraft
 import vn.unishare.domain.repository.DocumentUploadRepository
 import vn.unishare.domain.repository.DraftMetadata
@@ -26,6 +30,15 @@ import java.net.URL
 import java.security.MessageDigest
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+internal class InvalidSelectedPdfException(
+    message: String = "Tệp PDF không hợp lệ. Vui lòng chọn lại tài liệu."
+) : IllegalArgumentException(message)
+
+internal class DocumentUploadApiException(
+    val httpStatus: Int,
+    val invalidPdf: Boolean
+) : Exception()
 
 class DocumentUploadRepositoryImpl(
     private val context: Context,
@@ -125,7 +138,7 @@ class DocumentUploadRepositoryImpl(
             "Staging path does not belong to current user"
         }
 
-        val localHash = hashLocalFile(uri, maxBytes)
+        val localHash = hashLocalFile(uri, maxBytes, contentType == "application/pdf")
         val reference = storage.reference.child(path)
 
         val existing = readMetadataIfExists(reference)
@@ -244,7 +257,8 @@ class DocumentUploadRepositoryImpl(
 
     private suspend fun hashLocalFile(
         uri: Uri,
-        maxBytes: Long
+        maxBytes: Long,
+        isPdf: Boolean
     ): String = withContext(Dispatchers.IO) {
         val digest = MessageDigest.getInstance("SHA-256")
 
@@ -256,6 +270,12 @@ class DocumentUploadRepositoryImpl(
         stream.use { input ->
             val buffer = ByteArray(8192)
             var total = 0L
+            if (isPdf) {
+                val header = input.readAtMost(PDF_HEADER_PROBE_BYTES)
+                if (!hasPdfHeader(header)) throw InvalidSelectedPdfException()
+                digest.update(header)
+                total = header.size.toLong()
+            }
 
             while (true) {
                 val count = input.read(buffer)
@@ -438,14 +458,16 @@ class DocumentUploadRepositoryImpl(
                     } else {
                         connection.errorStream
                     }
-                )?.bufferedReader()?.use {
-                    it.readText()
-                }.orEmpty()
+                )?.use { String(it.readAtMost(16 * 1024), Charsets.UTF_8) }.orEmpty()
 
                 if (status !in 200..299) {
-                    throw IllegalStateException(
-                        "Backend HTTP $status: $responseText"
-                    )
+                    val error = runCatching { JSONObject(responseText).optJSONObject("error") }.getOrNull()
+                    val requestId = error?.optString("requestId")
+                        ?.takeIf { it.matches(Regex("[a-fA-F0-9-]{36}")) }
+                    Log.w("UniShareUpload", "HTTP $status, requestId=${requestId ?: "unavailable"}")
+                    val invalidPdf = error?.optString("code") == "INVALID_PDF" ||
+                        (status == 409 && error?.optString("message") in setOf("Invalid PDF header", "Invalid PDF structure"))
+                    throw DocumentUploadApiException(status, invalidPdf)
                 }
 
                 JSONObject(responseText)

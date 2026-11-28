@@ -473,8 +473,7 @@ class CheckoutViewModel(
                 "Không tìm thấy tài liệu trên hệ thống."
             rawError.contains("INVALID_DOCUMENT_STATUS", ignoreCase = true) ->
                 "Tài liệu hiện chưa được xuất bản hoặc đã bị ẩn."
-            rawError.isNotBlank() -> rawError
-            else -> "Đã xảy ra lỗi khi tạo đơn hàng. Vui lòng thử lại."
+            else -> "Chưa thể xử lý yêu cầu thanh toán. Vui lòng thử lại."
         }
     }
 

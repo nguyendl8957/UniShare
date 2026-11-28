@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AiProvider, AiProviderReply } from "./provider";
+import { AiProviderError, type AiProvider, type AiProviderReply } from "./provider";
 
 const MODEL = "gemini-3.5-flash-lite";
 const ENDPOINT =
@@ -7,6 +7,7 @@ const ENDPOINT =
 
 const MAX_CONTEXT_CHARS = 6000;
 const MAX_OUTPUT_TOKENS = 256;
+const GEMINI_TIMEOUT_MS = 15000;
 
 export function createGeminiProvider(
   apiKey: string,
@@ -91,6 +92,7 @@ export function createGeminiProvider(
 
       // After invoking fetch, the provider outcome may be uncertain.
       // The HTTP route must not automatically refund and retry.
+      const signal = AbortSignal.timeout(GEMINI_TIMEOUT_MS);
       const response = await fetchFn(ENDPOINT, {
         method: "POST",
         headers: {
@@ -98,36 +100,47 @@ export function createGeminiProvider(
           "x-goog-api-key": apiKey
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(15000)
+        signal
+      }).catch((error: unknown) => {
+        if (signal.aborted || (error instanceof Error && error.name === "TimeoutError")) {
+          throw new AiProviderError("GEMINI_TIMEOUT", "Gemini request timed out");
+        }
+        throw error;
       });
 
       if (!response.ok) {
-        throw new Error(`Gemini upstream HTTP ${response.status}`);
+        throw new AiProviderError(
+          response.status === 429 ? "GEMINI_RATE_LIMIT" : "GEMINI_UNAVAILABLE",
+          `Gemini upstream HTTP ${response.status}`
+        );
       }
 
-      const data = await response.json() as {
+      const data = await response.json().catch(() => {
+        if (signal.aborted) throw new AiProviderError("GEMINI_TIMEOUT", "Gemini response timed out");
+        throw new AiProviderError("GEMINI_RESPONSE_INVALID", "Gemini returned invalid response JSON");
+      }) as {
         candidates?: Array<{
           finishReason?: string;
-          content?: { parts?: Array<{ text?: string }> };
+          content?: { parts?: Array<{ text?: string; thought?: boolean }> };
         }>;
         usageMetadata?: { totalTokenCount?: number };
       };
 
       const candidate = data.candidates?.[0];
 
-      if (
-        candidate?.finishReason !== "STOP" ||
-        typeof candidate.content?.parts?.[0]?.text !== "string"
-      ) {
-        throw new Error("Gemini response incomplete");
+      const answerText = candidate?.content?.parts
+        ?.filter(part => part.thought !== true && typeof part.text === "string")
+        .map(part => part.text).join("");
+      if (candidate?.finishReason !== "STOP" || !answerText) {
+        throw new AiProviderError("GEMINI_RESPONSE_INVALID", "Gemini response incomplete");
       }
 
       let parsed: unknown;
 
       try {
-        parsed = JSON.parse(candidate.content.parts[0].text);
+        parsed = JSON.parse(answerText);
       } catch {
-        throw new Error("Gemini returned invalid JSON");
+        throw new AiProviderError("GEMINI_RESPONSE_INVALID", "Gemini returned invalid JSON");
       }
 
       if (
@@ -136,7 +149,7 @@ export function createGeminiProvider(
         !("answer" in parsed) ||
         !("citations" in parsed)
       ) {
-        throw new Error("Gemini answer schema invalid");
+        throw new AiProviderError("GEMINI_RESPONSE_INVALID", "Gemini answer schema invalid");
       }
 
       const value = parsed as {
@@ -159,7 +172,7 @@ export function createGeminiProvider(
             allowedPages.has(c.page)
         )
       ) {
-        throw new Error("Gemini answer or citation invalid");
+        throw new AiProviderError("GEMINI_RESPONSE_INVALID", "Gemini answer or citation invalid");
       }
 
       const totalTokens = data.usageMetadata?.totalTokenCount;
@@ -169,7 +182,7 @@ export function createGeminiProvider(
         totalTokens === undefined ||
         totalTokens < 0
       ) {
-        throw new Error("Gemini usage metadata unavailable");
+        throw new AiProviderError("GEMINI_RESPONSE_INVALID", "Gemini usage metadata unavailable");
       }
 
       return {

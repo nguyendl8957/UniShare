@@ -3,7 +3,10 @@ package vn.unishare.feature.explore
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -12,8 +15,12 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import vn.unishare.saveRegressionScreenshot
+import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import vn.unishare.feature.explore.ui.DocumentDetailScreen
 import vn.unishare.feature.explore.ui.ExploreScreen
@@ -24,6 +31,41 @@ class ExploreFlowTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
+    @Test
+    fun exploreFilterFollowsBuyerAndSellerColors() {
+        val viewModel = ExploreViewModel(
+            catalogRepository = FakeExploreCatalogRepository(),
+            mainDispatcher = Dispatchers.Main.immediate
+        )
+        var appMode by mutableStateOf(UniAppMode.BUYER)
+        composeTestRule.setContent {
+            UniShareTheme(mode = appMode) {
+                ExploreScreen(viewModel = viewModel, onDocumentClick = {}, appMode = appMode)
+            }
+        }
+        composeTestRule.onNodeWithTag("home_search_bar").performClick()
+
+        val filter = composeTestRule.onNodeWithTag("btn_open_filter")
+        val buyerGreen = Color(0xFF2E7D32)
+        val sellerBlue = Color(0xFF0863CE)
+        val buyerPixels = filter.captureToImage().toPixelMap()
+        assertTrue((0 until buyerPixels.width).any { x ->
+            (0 until buyerPixels.height).any { y -> buyerPixels[x, y] == buyerGreen }
+        })
+
+        saveRegressionScreenshot("buyer-explore")
+        composeTestRule.runOnIdle { appMode = UniAppMode.SELLER }
+        val sellerPixels = filter.captureToImage().toPixelMap()
+        saveRegressionScreenshot("seller-explore")
+        assertTrue((0 until sellerPixels.width).any { x ->
+            (0 until sellerPixels.height).any { y -> sellerPixels[x, y] == sellerBlue }
+        })
+        assertFalse((0 until sellerPixels.width).any { x ->
+            (0 until sellerPixels.height).any { y -> sellerPixels[x, y] == buyerGreen }
+        })
+    }
 
     @Test
     fun homeToSearchFilterSortToDetailGalleryAndBuyCta_passesDocIdAndPreservesStateOnBack() {

@@ -1,10 +1,19 @@
 package vn.unishare.feature.seller
 
+import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
-import androidx.compose.ui.test.junit4.createComposeRule
+import android.os.SystemClock
+import android.provider.MediaStore
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -26,13 +35,14 @@ import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import vn.unishare.saveRegressionScreenshot
 import vn.unishare.core.ui.theme.UniAppMode
 import vn.unishare.core.ui.theme.UniShareTheme
 import vn.unishare.data.repository.DocumentUploadRepositoryImpl
 import vn.unishare.feature.seller.ui.A04SellerRepositoryAdapter
-import vn.unishare.feature.seller.ui.SelectedPdfFile
 import vn.unishare.feature.seller.ui.SelectedPreviewImage
 import vn.unishare.feature.seller.ui.SellerDocumentStatus
+import vn.unishare.feature.seller.ui.SellerDocumentsListState
 import vn.unishare.feature.seller.ui.UploadPublishState
 import vn.unishare.feature.seller.ui.UploadWizardScreen
 import vn.unishare.feature.seller.ui.UploadWizardViewModel
@@ -44,7 +54,7 @@ import java.util.UUID
 class C04FirebaseIntegrationTest {
 
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
     fun wizardPublishesAndArchivesUsingRealA04() {
@@ -90,6 +100,17 @@ class C04FirebaseIntegrationTest {
         )
 
         val pdfFile = createPdf(context.cacheDir)
+        val resolver = context.contentResolver
+        val downloadUri = requireNotNull(resolver.insert(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, pdfFile.name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+            }
+        ))
+        requireNotNull(resolver.openOutputStream(downloadUri)).use { output ->
+            pdfFile.inputStream().use { it.copyTo(output) }
+        }
         val pngFile = createPng(context.cacheDir)
 
         lateinit var viewModel: UploadWizardViewModel
@@ -106,6 +127,9 @@ class C04FirebaseIntegrationTest {
             autoLoadDocuments = false
         )
 
+        composeRule.activityRule.scenario.onActivity {
+            it.enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(0, 0))
+        }
         composeRule.setContent {
             UniShareTheme(mode = UniAppMode.SELLER) {
                 UploadWizardScreen(
@@ -119,16 +143,6 @@ class C04FirebaseIntegrationTest {
                                 displayName = pngFile.name,
                                 mimeType = "image/png",
                                 sizeBytes = pngFile.length()
-                            )
-                        )
-                    },
-                    onPickPdfOverride = {
-                        viewModel.selectPdfFile(
-                            SelectedPdfFile(
-                                uriString = Uri.fromFile(pdfFile).toString(),
-                                displayName = pdfFile.name,
-                                mimeType = "application/pdf",
-                                sizeBytes = pdfFile.length()
                             )
                         )
                     }
@@ -145,89 +159,139 @@ class C04FirebaseIntegrationTest {
         composeRule.onNodeWithTag("btn_pick_pdf")
             .performScrollTo().performClick()
 
-        composeRule.onNodeWithTag("btn_step2_next")
-            .performScrollTo().performClick()
-
-        val title = "C04 Real Firebase ${UUID.randomUUID()}"
-
-        composeRule.onNodeWithTag("input_seller_title")
-            .performScrollTo().performTextReplacement(title)
-
-        composeRule.onNodeWithTag("dropdown_seller_category")
-            .performScrollTo().performClick()
-
-        composeRule.onNodeWithText("Note tóm tắt")
-            .performClick()
-
-        composeRule.onNodeWithTag("dropdown_seller_subject")
-            .performScrollTo().performClick()
-
-        composeRule.onNodeWithText("Lập trình")
-            .performClick()
-
-        composeRule.onNodeWithTag("dropdown_seller_school")
-            .performScrollTo().performClick()
-
-        composeRule.onNodeWithText("ĐH Bách Khoa TP.HCM")
-            .performClick()
-
-        composeRule.onNodeWithTag("input_seller_price")
-            .performScrollTo().performTextReplacement("20000")
-
-        composeRule.onNodeWithTag("checkbox_ownership_consent")
-            .performScrollTo().performClick()
-
-        composeRule.onNodeWithTag("btn_publish_document")
-            .performScrollTo().performClick()
-
-        composeRule.waitUntil(90_000L) {
-            when (viewModel.wizardState.value.uploadPublishState) {
-                is UploadPublishState.Published -> true
-                is UploadPublishState.Failed -> true
-                else -> false
+        try {
+            if (!clickPickerItem(pdfFile.name, timeoutMs = 3_000)) {
+                assertTrue("DocumentsUI roots", clickPickerItem("Show roots"))
+                assertTrue("DocumentsUI Downloads", clickPickerItem("Downloads"))
+                assertTrue("DocumentsUI PDF", clickPickerItem(pdfFile.name))
             }
+            composeRule.waitUntil(15_000) {
+                val wizard = viewModel.wizardState.value
+                wizard.selectedPdf != null || wizard.fieldErrors.pdfError != null
+            }
+            val wizard = viewModel.wizardState.value
+            val selected = requireNotNull(wizard.selectedPdf) { "PDF picker error: ${wizard.fieldErrors.pdfError}" }
+            assertTrue(selected.uriString.startsWith("content://"))
+            assertEquals(pdfFile.length(), selected.sizeBytes)
+            composeRule.onNodeWithText("(PDF, tối đa 25 MiB)").performScrollTo().assertIsDisplayed()
+            saveRegressionScreenshot("seller-upload-pdf")
+
+            composeRule.onNodeWithTag("btn_step2_next")
+                .performScrollTo().performClick()
+
+            val title = "C04 Real Firebase ${UUID.randomUUID()}"
+
+            composeRule.onNodeWithTag("input_seller_title")
+                .performScrollTo().performTextReplacement(title)
+
+            composeRule.onNodeWithTag("dropdown_seller_category")
+                .performScrollTo().performClick()
+
+            composeRule.onNodeWithText("Note tóm tắt")
+                .performClick()
+
+            composeRule.onNodeWithTag("dropdown_seller_subject")
+                .performScrollTo().performClick()
+
+            composeRule.onNodeWithText("Lập trình")
+                .performClick()
+
+            composeRule.onNodeWithTag("dropdown_seller_school")
+                .performScrollTo().performClick()
+
+            composeRule.onNodeWithText("ĐH Bách Khoa TP.HCM")
+                .performClick()
+
+            composeRule.onNodeWithTag("input_seller_price")
+                .performScrollTo().performTextReplacement("20000")
+
+            composeRule.onNodeWithTag("checkbox_ownership_consent")
+                .performScrollTo().performClick()
+
+            composeRule.onNodeWithTag("btn_publish_document")
+                .performScrollTo().performClick()
+
+            composeRule.waitUntil(90_000L) {
+                when (viewModel.wizardState.value.uploadPublishState) {
+                    is UploadPublishState.Published -> true
+                    is UploadPublishState.Failed -> true
+                    else -> false
+                }
+            }
+
+            val state = viewModel.wizardState.value.uploadPublishState
+
+            if (state is UploadPublishState.Failed) {
+                fail("Firebase publish failed: ${state.message}")
+            }
+
+            assertTrue(state is UploadPublishState.Published)
+
+            val doc = (state as UploadPublishState.Published).document
+            val catalogRef = firestore.collection("catalog").document(doc.docId)
+
+            val catalog = runBlocking { catalogRef.get().await() }
+
+            assertTrue(catalog.exists())
+            assertEquals(title, catalog.getString("title"))
+            assertEquals("programming", catalog.getString("subjectId"))
+            assertEquals("note", catalog.getString("categoryId"))
+            assertEquals(20000L, catalog.getLong("priceVnd"))
+            composeRule.waitUntil(15_000) {
+                val listing = viewModel.documentsState.value.listState as? SellerDocumentsListState.Content
+                listing?.items?.any { it.docId == doc.docId && it.title == title } == true
+            }
+
+            val archived = runBlocking {
+                adapter.archiveDocument(doc.docId, 1).getOrThrow()
+            }
+
+            assertEquals(SellerDocumentStatus.ARCHIVED, archived.status)
+
+            val afterArchive = runBlocking {
+                catalogRef.get().await()
+            }
+
+            assertFalse(afterArchive.exists())
+        } finally {
+            resolver.delete(downloadUri, null, null)
+            pdfFile.delete()
+            pngFile.delete()
         }
+    }
 
-        val state = viewModel.wizardState.value.uploadPublishState
-
-        if (state is UploadPublishState.Failed) {
-            fail("Firebase publish failed: ${state.message}")
+    private fun clickPickerItem(label: String, timeoutMs: Long = 8_000): Boolean {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            var node = automation.rootInActiveWindow?.let { findPickerItem(it, label) }
+            while (node != null) {
+                if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                node = node.parent
+            }
+            SystemClock.sleep(150)
         }
+        return false
+    }
 
-        assertTrue(state is UploadPublishState.Published)
-
-        val doc = (state as UploadPublishState.Published).document
-        val catalogRef = firestore.collection("catalog").document(doc.docId)
-
-        val catalog = runBlocking { catalogRef.get().await() }
-
-        assertTrue(catalog.exists())
-        assertEquals(title, catalog.getString("title"))
-        assertEquals("programming", catalog.getString("subjectId"))
-        assertEquals("note", catalog.getString("categoryId"))
-        assertEquals(20000L, catalog.getLong("priceVnd"))
-
-        val archived = runBlocking {
-            adapter.archiveDocument(doc.docId, 1).getOrThrow()
+    private fun findPickerItem(node: AccessibilityNodeInfo, label: String): AccessibilityNodeInfo? {
+        if (node.text?.toString() == label || node.contentDescription?.toString() == label) return node
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            findPickerItem(child, label)?.let { return it }
         }
-
-        assertEquals(SellerDocumentStatus.ARCHIVED, archived.status)
-
-        val afterArchive = runBlocking {
-            catalogRef.get().await()
-        }
-
-        assertFalse(afterArchive.exists())
+        return null
     }
 
     private fun createPdf(directory: File): File {
         val file = File(directory, "c04-${UUID.randomUUID()}.pdf")
         val pdf = PdfDocument()
-        val page = pdf.startPage(
-            PdfDocument.PageInfo.Builder(400, 600, 1).create()
-        )
-        page.canvas.drawColor(Color.WHITE)
-        pdf.finishPage(page)
+        for (pageNumber in 1..2) {
+            val page = pdf.startPage(PdfDocument.PageInfo.Builder(400, 600, pageNumber).create())
+            page.canvas.drawColor(Color.WHITE)
+            page.canvas.drawText("UniShare C04 page $pageNumber", 32f, 64f, Paint().apply { textSize = 18f })
+            pdf.finishPage(page)
+        }
         FileOutputStream(file).use { pdf.writeTo(it) }
         pdf.close()
         return file

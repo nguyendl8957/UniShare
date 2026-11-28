@@ -6,8 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import vn.unishare.data.remote.readAtMost
 import java.io.ByteArrayOutputStream
-import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -79,7 +79,7 @@ class HttpDocumentAiRepository(
                 try {
                     connection.requestMethod = "POST"
                     connection.connectTimeout = 15_000
-                    connection.readTimeout = 45_000
+                    connection.readTimeout = 65_000
                     connection.instanceFollowRedirects = false
                     connection.doOutput = true
 
@@ -100,14 +100,18 @@ class HttpDocumentAiRepository(
                     val status = connection.responseCode
 
                     if (status != 200) {
-                        throw mapAiHttpStatus(status)
+                        val errorCode = connection.errorStream?.use { stream ->
+                            val error = String(stream.readAtMost(4096), Charsets.UTF_8)
+                            runCatching { JSONObject(error).optJSONObject("error")?.optString("code") }.getOrNull()
+                        }
+                        throw mapAiHttpStatus(status, errorCode)
                     }
 
                     val contentType = connection.contentType
                         ?.substringBefore(';')?.trim()
 
                     if (contentType != "application/json") {
-                        throw IOException("Unexpected AI response type")
+                        throw AiChatFailure.ServiceUnavailable("Phản hồi từ AI không hợp lệ. Vui lòng thử lại sau.")
                     }
 
                     val output = ByteArrayOutputStream()
@@ -119,7 +123,7 @@ class HttpDocumentAiRepository(
                             if (count == -1) break
 
                             if (output.size() + count > MAX_RESPONSE_BYTES) {
-                                throw IOException("AI response too large")
+                                throw AiChatFailure.ServiceUnavailable("Phản hồi từ AI vượt giới hạn. Hãy thử câu hỏi ngắn hơn.", retryable = false)
                             }
 
                             output.write(buffer, 0, count)
@@ -140,7 +144,7 @@ class HttpDocumentAiRepository(
                         !MESSAGE_ID.matches(requestId) ||
                         citationsJson.length() > 20
                     ) {
-                        throw IOException("Invalid AI response")
+                        throw AiChatFailure.ServiceUnavailable("Phản hồi từ AI không hợp lệ. Vui lòng thử lại sau.")
                     }
 
                     val citations = buildList {
@@ -150,7 +154,7 @@ class HttpDocumentAiRepository(
                                 .getInt("page")
 
                             if (page !in 1..10000) {
-                                throw IOException("Invalid citation page")
+                                throw AiChatFailure.ServiceUnavailable("Không xác minh được trang trích dẫn của AI.")
                             }
 
                             add(AiCitation(page = page))
@@ -184,15 +188,33 @@ class HttpDocumentAiRepository(
  * Pure HTTP error mapping, independently unit-testable.
  * Does not access Firebase, network or private document data.
  */
-internal fun mapAiHttpStatus(status: Int): Exception = when (status) {
-    401 -> AiChatFailure.Unauthorized()
-    403 -> AiChatFailure.Forbidden()
-    429 -> AiChatFailure.QuotaExceeded()
-    409 -> AiChatFailure.ServiceUnavailable(
-        "Câu hỏi đang được xử lý. Vui lòng thử lại sau."
-    )
-    400, 404, 422 -> IllegalArgumentException(
-        "Không thể xử lý câu hỏi hoặc tài liệu này."
-    )
-    else -> AiChatFailure.ServiceUnavailable()
+internal fun mapAiHttpStatus(status: Int, code: String? = null): Exception {
+    val detail = when (code) {
+        "AI_DISABLED" -> "Trợ lý AI chưa được bật."
+        "AI_NOT_ALLOWED" -> "Tài khoản của bạn chưa được cấp quyền dùng AI."
+        "AI_UNCONFIGURED" -> "Trợ lý AI chưa hoàn tất cấu hình. Vui lòng liên hệ hỗ trợ."
+        "AI_RESULT_UNKNOWN" -> "Chưa xác nhận được kết quả. Bạn có thể gửi câu hỏi mới."
+        "PDF_TEXT_UNAVAILABLE" -> "PDF này không có văn bản trích xuất được để hỏi AI."
+        "PDF_TOO_LARGE" -> "Tệp PDF vượt giới hạn 2 MiB dành cho AI."
+        "PDF_TOO_MANY_PAGES" -> "Tệp PDF vượt giới hạn 20 trang dành cho AI."
+        "INVALID_PDF" -> "AI chưa đọc được tệp PDF này."
+        else -> null
+    }
+    if (detail != null) return AiChatFailure.ServiceUnavailable(detail, retryable = false)
+    return when (code) {
+        "GEMINI_RATE_LIMIT" -> AiChatFailure.ServiceUnavailable("Dịch vụ AI đang giới hạn số yêu cầu. Vui lòng thử lại sau.")
+        "GEMINI_TIMEOUT" -> AiChatFailure.ServiceUnavailable("Gemini phản hồi quá thời gian chờ. Bạn có thể kiểm tra lại yêu cầu.")
+        "GEMINI_UNAVAILABLE" -> AiChatFailure.ServiceUnavailable("Chưa kết nối được với Gemini. Vui lòng thử lại sau.")
+        "GEMINI_RESPONSE_INVALID" -> AiChatFailure.ServiceUnavailable("Phản hồi Gemini chưa hoàn chỉnh. Bạn có thể gửi câu hỏi mới.", retryable = false)
+        "PDF_SOURCE_UNAVAILABLE" -> AiChatFailure.ServiceUnavailable("Chưa tải được PDF để hỏi AI. Vui lòng thử lại.")
+        else -> when (status) {
+            401 -> AiChatFailure.Unauthorized()
+            403 -> AiChatFailure.Forbidden()
+            429 -> AiChatFailure.QuotaExceeded()
+            409 -> AiChatFailure.ServiceUnavailable("Câu hỏi đang được xử lý. Vui lòng thử lại sau.")
+            400, 404, 422 -> IllegalArgumentException("Không thể xử lý câu hỏi hoặc tài liệu này.")
+            504 -> AiChatFailure.ServiceUnavailable("Máy chủ chưa phản hồi kịp. Bạn có thể kiểm tra lại yêu cầu.")
+            else -> AiChatFailure.ServiceUnavailable()
+        }
+    }
 }

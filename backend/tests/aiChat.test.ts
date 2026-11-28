@@ -130,14 +130,15 @@ test("A08 AI chat authentication and entitlement", async (t) => {
       sizeBytes: 1024
     });
 
-    await t.test("503 - authorized, provider not configured", async () => {
+    await t.test("503 - authorized, AI disabled", async () => {
+      delete process.env.UNISHARE_AI_ENABLED;
       const res = await request(app)
         .post(endpoint)
         .set("Authorization", `Bearer ${token}`)
         .send(validBody);
 
       assert.equal(res.status, 503);
-      assert.equal(res.body.error.code, "SERVICE_UNAVAILABLE");
+      assert.equal(res.body.error.code, "AI_DISABLED");
     });
 
     await entitlementRef.update({

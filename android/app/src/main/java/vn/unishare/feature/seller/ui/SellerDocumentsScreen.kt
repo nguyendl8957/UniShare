@@ -1,5 +1,6 @@
 package vn.unishare.feature.seller.ui
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,7 +55,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -167,8 +170,20 @@ fun SellerDocumentsContent(
     modifier: Modifier = Modifier,
     onBottomNavSelected: ((String) -> Unit)? = null
 ) {
+    val window = LocalActivity.current?.window
+    val view = LocalView.current
+    if (window != null && !view.isInEditMode) {
+        LifecycleResumeEffect(window, view) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            val previous = controller.isAppearanceLightStatusBars
+            controller.isAppearanceLightStatusBars = false
+            onPauseOrDispose { controller.isAppearanceLightStatusBars = previous }
+        }
+    }
+
     val totalCount = (state.listState as? SellerDocumentsListState.Content)?.items?.size ?: 0
 
+    val listHasDocuments = state.listState is SellerDocumentsListState.Content
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = ManageBg,
@@ -188,33 +203,35 @@ fun SellerDocumentsContent(
             }
         },
         floatingActionButton = {
-            Surface(
-                color = ManageAccentBlue,
-                shape = CircleShape,
-                shadowElevation = 4.dp,
-                modifier = Modifier
-                    .size(68.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onCreateDocumentClick)
-                    .testTag("fab_create_document")
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxSize()
+            if (listHasDocuments) {
+                Surface(
+                    color = ManageAccentBlue,
+                    shape = CircleShape,
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onCreateDocumentClick)
+                        .testTag("fab_create_document")
                 ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_plus),
-                        contentDescription = "Đăng bán tài liệu mới",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Text(
-                        text = "Đăng bán",
-                        color = Color.White,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_plus),
+                            contentDescription = "Đăng bán tài liệu mới",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            text = "Đăng bán",
+                            color = Color.White,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -263,7 +280,8 @@ fun SellerDocumentsContent(
                         UiFeedback(
                             state = UiFeedbackState.Empty(
                                 message = "Bạn chưa có tài liệu nào đang bán",
-                                subtitle = "Nhấn nút Đăng bán để tải lên tài liệu đầu tiên của bạn."
+                                subtitle = "Tải lên tài liệu đầu tiên của bạn.",
+                                illustrationRes = R.drawable.ic_seller_empty_illustration
                             ),
                             modifier = Modifier.weight(1f, fill = false)
                         )

@@ -67,3 +67,32 @@ test("AI production allowlist security", async (t) => {
     assert.equal(isProductionAiAllowed("", base), false);
   });
 });
+
+test("AI entitled access mode", () => {
+  const config = {
+    enabled: "true",
+    apiKey: "FAKE_TEST_KEY_ONLY",
+    allowlist: "",
+    accessMode: "all_entitled"
+  };
+
+  assert.equal(isProductionAiAllowed("buyer_one", config), true);
+  assert.equal(isProductionAiAllowed("buyer_two", config), true);
+  assert.equal(isProductionAiAllowed("", config), false);
+
+  assert.equal(isProductionAiAllowed("buyer_one", {
+    ...config, enabled: "false"
+  }), false);
+
+  assert.equal(isProductionAiAllowed("buyer_one", {
+    ...config, apiKey: ""
+  }), false);
+
+  assert.equal(isProductionAiAllowed("buyer_one", {
+    ...config, accessMode: undefined
+  }), false);
+
+  assert.equal(isProductionAiAllowed("buyer_one", {
+    ...config, accessMode: "invalid"
+  }), false);
+});

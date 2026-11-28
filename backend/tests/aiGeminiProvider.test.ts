@@ -75,6 +75,28 @@ test("A08 Gemini provider adapter", async (t) => {
     assert.match(result.answer, /O\(log n\)/);
   });
 
+  await t.test("maps upstream throttle and service errors without retrying", async () => {
+    for (const [status, code] of [[429, "GEMINI_RATE_LIMIT"], [503, "GEMINI_UNAVAILABLE"]] as const) {
+      let calls = 0;
+      const provider = createGeminiProvider("TEST_KEY", async () => {
+        calls++;
+        return new Response(null, { status });
+      });
+      await assert.rejects(provider.ask(input), { code });
+      assert.equal(calls, 1);
+    }
+  });
+
+  await t.test("maps a provider timeout without retrying", async () => {
+    let calls = 0;
+    const provider = createGeminiProvider("TEST_KEY", async () => {
+      calls++;
+      throw new DOMException("Test provider timeout", "TimeoutError");
+    });
+    await assert.rejects(provider.ask(input), { code: "GEMINI_TIMEOUT" });
+    assert.equal(calls, 1);
+  });
+
   await t.test("rejects citation outside provided pages", async () => {
     const fakeFetch = (async () =>
       new Response(

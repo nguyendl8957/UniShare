@@ -1,5 +1,12 @@
 package vn.unishare.feature.library
 
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.firebase.auth.FirebaseAuth
@@ -8,14 +15,63 @@ import kotlinx.coroutines.tasks.await
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import vn.unishare.data.remote.PdfApiException
 import vn.unishare.data.remote.PurchasedPdfApi
 import vn.unishare.feature.library.reader.PdfReaderController
+import vn.unishare.feature.library.ui.RealPdfReaderScreen
 
 @RunWith(AndroidJUnit4::class)
 class PdfReaderControllerIntegrationTest {
+
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun readerConsumesSavedCitationAfterPdfLoadsAndIgnoresOutOfRangePage() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val auth = FirebaseAuth.getInstance()
+        auth.useEmulator("127.0.0.1", 9099)
+        auth.signOut()
+
+        val controller = PdfReaderController(
+            context, auth, PurchasedPdfApi(auth, "http://127.0.0.1:3000")
+        )
+        val savedState = SavedStateHandle(mapOf("pdf_page" to 2))
+        try {
+            runBlocking {
+                auth.signInWithEmailAndPassword(
+                    "a06-reader-owner@example.test", "EmulatorOnly_12345!"
+                ).await()
+            }
+            composeRule.setContent {
+                val page by savedState.getStateFlow("pdf_page", 0).collectAsState()
+                RealPdfReaderScreen(
+                    docId = "a06_pixel_reader_fixture",
+                    title = "PDF Fixture",
+                    auth = auth,
+                    controller = controller,
+                    onBackClick = {},
+                    citationPage = page,
+                    onCitationConsumed = { savedState["pdf_page"] = 0 }
+                )
+            }
+            composeRule.waitUntil(15_000) {
+                savedState.get<Int>("pdf_page") == 0
+            }
+            composeRule.onNodeWithTag("reader_real_pdf_page").assertIsDisplayed()
+            composeRule.onNodeWithText("Trang 2/2").assertIsDisplayed()
+
+            composeRule.runOnIdle { savedState["pdf_page"] = 5 }
+            composeRule.waitUntil(5_000) { savedState.get<Int>("pdf_page") == 0 }
+            composeRule.onNodeWithText("Trang 2/2").assertIsDisplayed()
+        } finally {
+            runBlocking { controller.close() }
+            auth.signOut()
+        }
+    }
 
     @Test
     fun purchasedPdfRendersTwoPagesAndRejectsOtherBuyer() = runBlocking {
