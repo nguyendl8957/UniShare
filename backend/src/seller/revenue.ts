@@ -127,8 +127,25 @@ sellerRevenueRouter.get(
         // Defined as number of successful sales, not unique doc IDs.
         totalDocumentsSold: count
       });
-    } catch {
-      console.error("Seller revenue aggregation failed");
+    } catch (error) {
+      const details = error as {
+        name?: unknown;
+        code?: unknown;
+        message?: unknown;
+      };
+
+      console.error("Seller revenue aggregation failed", {
+        name: typeof details?.name === "string"
+          ? details.name
+          : "UnknownError",
+        code: typeof details?.code === "number" ||
+              typeof details?.code === "string"
+          ? details.code
+          : "UNKNOWN",
+        message: typeof details?.message === "string"
+          ? details.message.slice(0, 300)
+          : "No error message"
+      });
 
       sendApiError(
         res,
