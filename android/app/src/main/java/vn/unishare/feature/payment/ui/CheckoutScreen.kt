@@ -355,6 +355,9 @@ private fun BankTransferSection(
 
             HorizontalDivider(color = dividerColor)
 
+            VietQrSection(info = transferInfo)
+
+
             // Dòng 1: Ngân hàng nhận
             TransferInfoRow(
                 label = "Ngân hàng",
@@ -386,10 +389,10 @@ private fun BankTransferSection(
             // Dòng 5: Nội dung chuyển khoản (bắt buộc đúng paymentCode)
             TransferInfoRowWithCopy(
                 label = "Nội dung chuyển khoản",
-                value = transferInfo.paymentCode,
+                value = VietQr.transferContent(transferInfo),
                 valueColor = Color(0xFFD32F2F),
                 copyTag = "btn_copy_code",
-                onCopy = { onCopyField("Nội dung chuyển khoản", transferInfo.paymentCode) }
+                onCopy = { onCopyField("Nội dung chuyển khoản", VietQr.transferContent(transferInfo)) }
             )
 
             Surface(
@@ -398,7 +401,7 @@ private fun BankTransferSection(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Lưu ý: Bắt buộc ghi đúng mã nội dung '${transferInfo.paymentCode}' để hệ thống tự động duyệt thanh toán.",
+                    text = "Lưu ý: Bắt buộc ghi đúng mã nội dung '${VietQr.transferContent(transferInfo)}' để hệ thống tự động duyệt thanh toán.",
                     color = Color(0xFF991B1B),
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
