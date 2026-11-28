@@ -194,6 +194,9 @@ data class ProfileUiState(
     val sellerEnabled: Boolean = false,
     val enrollmentState: SellerEnrollmentState = SellerEnrollmentState.Idle,
     val achievements: List<ProfileAchievementBadge> = defaultProfileBadges(),
+    val sellerDashboardLoading: Boolean = false,
+    val sellerDashboardLoaded: Boolean = false,
+    val sellerDashboardError: String? = null,
     val sellerDashboard: SellerDashboardSummary = SellerDashboardSummary(
         monthlyRevenueVnd = 0,
         revenueGrowthLabel = "Chưa có dữ liệu",

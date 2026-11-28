@@ -691,17 +691,7 @@ private fun SellerDocumentCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_eye),
-                            contentDescription = null,
-                            tint = ManageMutedBlue,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = "${document.viewCount}  |  ${document.reviewCount}  |",
-                            color = ManageMutedBlue,
-                            fontSize = 10.5.sp
-                        )
+
                         Icon(
                             painter = painterResource(id = R.drawable.ic_history),
                             contentDescription = null,

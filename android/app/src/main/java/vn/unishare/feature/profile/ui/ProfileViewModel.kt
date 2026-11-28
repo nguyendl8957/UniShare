@@ -20,7 +20,8 @@ class ProfileViewModel(
     private val authRepository: AuthRepository,
     private val profileRepository: ProfileRepository,
     private val sellerRoleContract: SellerRoleContract,
-    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate
+    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val sellerDashboardRepository: SellerDashboardRepository? = null
 ) : ViewModel() {
 
     constructor(
@@ -37,6 +38,7 @@ class ProfileViewModel(
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
 
     private var activeProfileJob: Job? = null
+    private var activeSellerDashboardJob: Job? = null
     private var activePublicProfileJob: Job? = null
     private var profileLoadSequence: Long = 0L
 
@@ -79,6 +81,7 @@ class ProfileViewModel(
         newActiveUid: String? = null
     ) {
         activeProfileJob?.cancel()
+        activeSellerDashboardJob?.cancel()
         profileLoadSequence++
         val preservedPublicId = _uiState.value.selectedPublicSellerId
         val preservedPublicState = _uiState.value.publicSellerState
@@ -148,6 +151,9 @@ class ProfileViewModel(
                             sellerEnabled = sellerAllowed,
                             currentMode = initialMode
                         )
+                    }
+                    if (initialMode == UniAppMode.SELLER) {
+                        loadSellerDashboard()
                     }
                 },
                 onFailure = { error ->
@@ -357,6 +363,7 @@ class ProfileViewModel(
                 enrollmentState = SellerEnrollmentState.Idle
             )
         }
+        loadSellerDashboard()
         viewModelScope.launch(mainDispatcher) {
             sellerRoleContract.updateLastMode(uid, UniAppMode.SELLER)
         }
@@ -435,6 +442,57 @@ class ProfileViewModel(
         }
     }
 
+    fun loadSellerDashboard() {
+        val current = _uiState.value
+        val uid = current.activeUid ?: return
+
+        if (!current.sellerEnabled ||
+            current.currentMode != UniAppMode.SELLER
+        ) return
+
+        activeSellerDashboardJob?.cancel()
+
+        _uiState.update {
+            it.copy(
+                sellerDashboardLoading = true,
+                sellerDashboardLoaded = false,
+                sellerDashboardError = null
+            )
+        }
+
+        activeSellerDashboardJob = viewModelScope.launch(mainDispatcher) {
+            val result = sellerDashboardRepository?.load()
+                ?: Result.failure(
+                    IllegalStateException("Seller dashboard API unavailable")
+                )
+
+            if (_uiState.value.activeUid != uid ||
+                _uiState.value.currentMode != UniAppMode.SELLER
+            ) return@launch
+
+            result.fold(
+                onSuccess = { dashboard ->
+                    _uiState.update {
+                        it.copy(
+                            sellerDashboard = dashboard,
+                            sellerDashboardLoading = false,
+                            sellerDashboardLoaded = true,
+                            sellerDashboardError = null
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update {
+                        it.copy(
+                            sellerDashboardLoading = false,
+                            sellerDashboardLoaded = false,
+                            sellerDashboardError = mapErrorMessage(error)
+                        )
+                    }
+                }
+            )
+        }
+    }
     fun signOut() {
         // Xóa ngay state hồ sơ trước khi gọi signOut để không nháy dữ liệu cũ
         clearPrivateProfileState(isRestoring = false, isGuest = true)

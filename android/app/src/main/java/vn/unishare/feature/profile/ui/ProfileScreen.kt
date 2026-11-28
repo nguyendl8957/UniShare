@@ -163,6 +163,7 @@ fun ProfileScreen(
             uiState = uiState,
             onLoginClick = onLoginClick,
             onRetryLoad = viewModel::reloadMyProfile,
+            onRetrySellerDashboard = viewModel::loadSellerDashboard,
             onStartEdit = viewModel::startEditingProfile,
             onCancelEdit = viewModel::cancelEditingProfile,
             onEditNameChange = viewModel::onEditDisplayNameChange,
@@ -204,6 +205,7 @@ fun ProfileScreenContent(
     uiState: ProfileUiState,
     onLoginClick: () -> Unit,
     onRetryLoad: () -> Unit,
+    onRetrySellerDashboard: () -> Unit = {},
     onStartEdit: () -> Unit,
     onCancelEdit: () -> Unit,
     onEditNameChange: (String) -> Unit,
@@ -288,6 +290,7 @@ fun ProfileScreenContent(
                 uiState.currentMode == UniAppMode.SELLER && uiState.sellerEnabled -> {
                     SellerModeDashboardBody(
                         uiState = uiState,
+                        onRetrySellerDashboard = onRetrySellerDashboard,
                         onOpenSellerManagement = onOpenSellerManagement,
                         onOpenSellerUpload = onOpenSellerUpload,
                         onOpenPublicSellerProfile = onOpenPublicSellerProfile
@@ -1271,6 +1274,7 @@ private fun SellerModeTopAppBar(
 @Composable
 private fun SellerModeDashboardBody(
     uiState: ProfileUiState,
+    onRetrySellerDashboard: () -> Unit,
     onOpenSellerManagement: () -> Unit,
     onOpenSellerUpload: () -> Unit,
     onOpenPublicSellerProfile: () -> Unit
@@ -1328,20 +1332,31 @@ private fun SellerModeDashboardBody(
             }
         }
 
-        // Real Seller statistics are not connected yet.
-        Surface(
-            color = Color(0xFFFFF7ED),
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        if (uiState.sellerDashboardLoading) {
             Text(
-                text = "Thống kê Người bán chưa được kết nối. " +
-                    "Các chỉ số bên dưới chỉ là giá trị khởi tạo, " +
-                    "không phải doanh thu hoặc đơn hàng thực tế.",
-                color = Color(0xFF9A3412),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(12.dp)
+                text = "Đang tải thống kê thực tế...",
+                color = SellerMutedText,
+                fontSize = 12.sp
             )
+        }
+
+        uiState.sellerDashboardError?.let { error ->
+            Surface(
+                color = Color(0xFFFFF7ED),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "Không tải được thống kê: $error",
+                        color = Color(0xFF9A3412),
+                        fontSize = 12.sp
+                    )
+                    TextButton(onClick = onRetrySellerDashboard) {
+                        Text("Thử lại")
+                    }
+                }
+            }
         }
 
         // 3 thẻ chỉ số tổng quan
@@ -1352,7 +1367,7 @@ private fun SellerModeDashboardBody(
             SellerMetricCard(
                 iconRes = R.drawable.ic_history,
                 label = "Doanh thu",
-                valueText = formatProfileVnd(dashboard.monthlyRevenueVnd),
+                valueText = if (uiState.sellerDashboardLoaded) formatProfileVnd(dashboard.monthlyRevenueVnd) else "—",
                 footerLeft = "Tháng này",
                 footerRight = dashboard.revenueGrowthLabel,
                 modifier = Modifier.weight(1f)
@@ -1360,7 +1375,7 @@ private fun SellerModeDashboardBody(
             SellerMetricCard(
                 iconRes = R.drawable.ic_file_text,
                 label = "Số tài liệu đã đăng",
-                valueText = dashboard.publishedDocCount.toString(),
+                valueText = if (uiState.sellerDashboardLoaded) dashboard.publishedDocCount.toString() else "—",
                 footerLeft = "Tổng cộng",
                 footerRight = null,
                 showChevron = true,
@@ -1372,7 +1387,7 @@ private fun SellerModeDashboardBody(
             SellerMetricCard(
                 iconRes = R.drawable.nav_seller_documents,
                 label = "Đơn hôm nay",
-                valueText = dashboard.todayOrderCount.toString(),
+                valueText = if (uiState.sellerDashboardLoaded) dashboard.todayOrderCount.toString() else "—",
                 footerLeft = "Tổng đơn",
                 footerRight = dashboard.orderGrowthLabel,
                 modifier = Modifier.weight(1f)
@@ -1473,22 +1488,7 @@ private fun SellerModeDashboardBody(
                                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                     )
                                 }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_eye),
-                                        contentDescription = null,
-                                        tint = SellerMutedText,
-                                        modifier = Modifier.size(11.dp)
-                                    )
-                                    Text(
-                                        text = "${doc.viewCount} lượt xem  •  ${doc.soldCount} đã bán",
-                                        color = SellerMutedText,
-                                        fontSize = 9.sp
-                                    )
-                                }
+
                             }
                             Text(
                                 text = formatProfileVnd(doc.priceVnd),
